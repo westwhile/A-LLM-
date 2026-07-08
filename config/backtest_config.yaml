@@ -1,0 +1,17 @@
+portfolio:
+  top_n: 50
+  max_weight: 0.05
+  min_holding_count: 30
+  rebalance_frequency: month_end
+
+cost:
+  commission_buy: 0.0003
+  commission_sell: 0.0003
+  stamp_tax_sell: 0.0005
+  slippage: 0.0005
+  impact_coef: 0.0002
+
+execution:
+  signal_price: close
+  execution_price: next_open
+  fallback_execution_price: next_close_return_proxy

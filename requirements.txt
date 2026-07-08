@@ -1,0 +1,11 @@
+numpy>=1.24
+pandas>=2.0
+PyYAML>=6.0
+
+# Optional for real data collection.
+akshare>=1.14
+
+# Optional for charts, richer regression diagnostics, and pytest.
+matplotlib>=3.8
+statsmodels>=0.14
+pytest>=8.0

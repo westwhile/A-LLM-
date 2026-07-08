@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ashare-factor-research"
+version = "0.1.0"
+description = "A-share multi-factor research framework with sample pipeline and LLM event factor stubs."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+data = ["akshare>=1.14"]
+research = ["matplotlib>=3.8", "statsmodels>=0.14"]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+ashare-factor = "ashare_factor_research.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

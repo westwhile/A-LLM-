@@ -1,0 +1,27 @@
+price_volume_factors:
+  - mom_20
+  - mom_60_skip5
+  - rev_5
+  - vol_20
+  - turnover_20
+  - amihud_20
+
+fundamental_factors:
+  - size
+  - bp
+  - ep
+  - roe
+  - gross_margin
+  - revenue_yoy
+  - profit_yoy
+
+money_flow_factors:
+  - mf_20
+
+llm_event_factors:
+  - event_sentiment_20
+
+processing:
+  winsorize_mad_n: 3.0
+  neutralize_industry_size: true
+  max_missing_ratio_by_date: 0.7
