@@ -6,7 +6,7 @@ import pandas as pd
 
 from ashare_factor_research.analysis.performance import calc_performance
 from ashare_factor_research.analysis.report_charts import save_placeholder_tables
-from ashare_factor_research.backtest.backtest_engine import run_backtest
+from ashare_factor_research.backtest.backtest_engine import run_event_backtest
 from ashare_factor_research.backtest.cost_model import CostConfig
 from ashare_factor_research.backtest.portfolio_builder import build_portfolio
 from ashare_factor_research.data.data_cleaner import add_adjusted_prices, add_forward_returns, filter_universe
@@ -96,8 +96,10 @@ def run_sample_pipeline(
     rebal_dates = month_end_rebalance_dates(get_trade_dates(data["daily_bar"]))
     score_df = processed[processed["trade_date"].isin(rebal_dates)][["trade_date", "ts_code", "score"]].dropna()
     portfolio = build_portfolio(score_df, top_n=top_n, max_weight=max_weight)
-    returns_df = add_adjusted_prices(data["daily_bar"])[["trade_date", "ts_code", "return_1d"]]
-    nav, trades = run_backtest(portfolio, returns_df, cost_config=CostConfig())
+    market_df = add_adjusted_prices(data["daily_bar"])
+    backtest = run_event_backtest(portfolio, market_df, cost_config=CostConfig())
+    nav = backtest.nav
+    trades = backtest.trades
     metrics = calc_performance(nav)
 
     out = Path(output_dir)
@@ -106,6 +108,9 @@ def run_sample_pipeline(
     corr.to_csv(out / "factor_corr.csv")
     nav.to_csv(out / "sample_nav.csv", index=False)
     trades.to_csv(out / "sample_trades.csv", index=False)
+    backtest.orders.to_csv(out / "sample_orders.csv", index=False)
+    backtest.fills.to_csv(out / "sample_fills.csv", index=False)
+    backtest.positions.to_csv(out / "sample_positions.csv", index=False)
     return {
         "factor_panel": processed,
         "factor_cols": factor_cols,
@@ -114,5 +119,8 @@ def run_sample_pipeline(
         "portfolio": portfolio,
         "nav": nav,
         "trades": trades,
+        "orders": backtest.orders,
+        "fills": backtest.fills,
+        "positions": backtest.positions,
         "metrics": metrics,
     }

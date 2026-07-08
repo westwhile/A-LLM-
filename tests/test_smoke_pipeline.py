@@ -18,7 +18,13 @@ class SmokePipelineTest(unittest.TestCase):
             self.assertFalse(result["ic_table"].empty)
             self.assertFalse(result["portfolio"].empty)
             self.assertFalse(result["nav"].empty)
+            self.assertFalse(result["orders"].empty)
+            self.assertFalse(result["fills"].empty)
+            self.assertFalse(result["positions"].empty)
             self.assertTrue((out_dir / "performance_metrics.csv").exists())
+            self.assertTrue((out_dir / "sample_orders.csv").exists())
+            self.assertTrue((out_dir / "sample_fills.csv").exists())
+            self.assertTrue((out_dir / "sample_positions.csv").exists())
 
 
 if __name__ == "__main__":

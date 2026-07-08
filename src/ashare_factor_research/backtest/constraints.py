@@ -21,3 +21,13 @@ def mark_tradability(daily_bar: pd.DataFrame) -> pd.DataFrame:
     if {"open", "down_limit"}.issubset(out.columns):
         out.loc[out["open"] <= out["down_limit"], "can_sell"] = False
     return out
+
+
+def trade_block_reason(row: pd.Series, side: str) -> str:
+    if bool(row.get("is_suspended", False)):
+        return "suspended"
+    if side == "buy" and not bool(row.get("can_buy", True)):
+        return "limit_up"
+    if side == "sell" and not bool(row.get("can_sell", True)):
+        return "limit_down"
+    return ""

@@ -14,6 +14,27 @@ class CostConfig:
     impact_coef: float = 0.0002
 
 
+def estimate_trade_cost(
+    notional: float,
+    side: str,
+    config: CostConfig | None = None,
+) -> dict[str, float]:
+    cfg = config or CostConfig()
+    commission_rate = cfg.commission_buy if side == "buy" else cfg.commission_sell
+    commission = notional * commission_rate
+    stamp_tax = notional * cfg.stamp_tax_sell if side == "sell" else 0.0
+    slippage = notional * cfg.slippage
+    impact_cost = notional * cfg.impact_coef
+    total_cost = commission + stamp_tax + slippage + impact_cost
+    return {
+        "commission": float(commission),
+        "stamp_tax": float(stamp_tax),
+        "slippage": float(slippage),
+        "impact_cost": float(impact_cost),
+        "total_cost": float(total_cost),
+    }
+
+
 def estimate_rebalance_cost(
     previous_weights: pd.Series,
     target_weights: pd.Series,
