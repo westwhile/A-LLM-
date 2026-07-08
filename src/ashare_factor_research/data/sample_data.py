@@ -20,10 +20,30 @@ def generate_sample_bundle(
     rows: list[dict[str, object]] = []
     basic_rows: list[dict[str, object]] = []
     industry_rows: list[dict[str, object]] = []
+    limit_rows: list[dict[str, object]] = []
 
     stock_quality = rng.normal(0, 1, n_stocks)
     stock_size = rng.lognormal(mean=9.0, sigma=0.35, size=n_stocks)
     prices = rng.uniform(8, 40, n_stocks)
+    trade_calendar = pd.DataFrame({"trade_date": dates, "is_open": True})
+    stock_basic = pd.DataFrame(
+        {
+            "ts_code": stocks,
+            "name": [f"Sample {i:03d}" for i in range(1, n_stocks + 1)],
+            "list_date": [dates[0] - pd.Timedelta(days=365)] * n_stocks,
+            "delist_date": [pd.NaT] * n_stocks,
+            "exchange": ["SZ"] * n_stocks,
+        }
+    )
+    index_member = pd.DataFrame(
+        {
+            "index_code": ["000905.SH"] * n_stocks,
+            "ts_code": stocks,
+            "weight": [1 / n_stocks] * n_stocks,
+            "in_date": [dates[0]] * n_stocks,
+            "out_date": [pd.NaT] * n_stocks,
+        }
+    )
 
     for d_idx, date in enumerate(dates):
         market_ret = rng.normal(0.0002, 0.012)
@@ -57,20 +77,32 @@ def generate_sample_bundle(
                     "down_limit": prev_close * 0.9,
                 }
             )
+            limit_rows.append(
+                {
+                    "trade_date": date,
+                    "ts_code": code,
+                    "up_limit": prev_close * 1.1,
+                    "down_limit": prev_close * 0.9,
+                }
+            )
 
             total_mv = stock_size[s_idx] * close * 10_000
             pe = max(3.0, 18 - 1.5 * stock_quality[s_idx] + rng.normal(0, 2))
             pb = max(0.4, 1.8 - 0.15 * stock_quality[s_idx] + rng.normal(0, 0.2))
+            ps = max(0.3, 2.5 - 0.2 * stock_quality[s_idx] + rng.normal(0, 0.3))
             turnover = float(rng.uniform(0.2, 4.5))
+            net_mf_amount = rng.normal(0, 1_000_000) + 50_000 * stock_quality[s_idx]
             basic_rows.append(
                 {
                     "trade_date": date,
                     "ts_code": code,
                     "pe_ttm": pe,
                     "pb": pb,
+                    "ps": ps,
                     "total_mv": total_mv,
                     "turnover_rate": turnover,
-                    "net_mf_amount": rng.normal(0, 1_000_000) + 50_000 * stock_quality[s_idx],
+                    "net_mf_amount": net_mf_amount,
+                    "large_order_net_mf_amount": net_mf_amount * rng.uniform(0.25, 0.75),
                 }
             )
             ind = industries[s_idx % len(industries)]
@@ -88,6 +120,9 @@ def generate_sample_bundle(
     ann_dates = pd.to_datetime(["2022-04-20", "2022-04-28", "2022-08-25"])
     for s_idx, code in enumerate(stocks):
         for report_date, ann_date in zip(report_dates, ann_dates):
+            total_assets = stock_size[s_idx] * rng.uniform(80_000, 140_000)
+            operating_revenue = total_assets * (0.18 + 0.03 * stock_quality[s_idx] + rng.normal(0, 0.02))
+            net_profit = total_assets * (0.035 + 0.01 * stock_quality[s_idx] + rng.normal(0, 0.006))
             financial_rows.append(
                 {
                     "report_period": report_date,
@@ -99,6 +134,10 @@ def generate_sample_bundle(
                     "debt_ratio": 0.45 - 0.03 * stock_quality[s_idx] + rng.normal(0, 0.04),
                     "revenue_yoy": 0.08 + 0.04 * stock_quality[s_idx] + rng.normal(0, 0.04),
                     "profit_yoy": 0.06 + 0.05 * stock_quality[s_idx] + rng.normal(0, 0.06),
+                    "total_assets": total_assets,
+                    "operating_revenue": operating_revenue,
+                    "net_profit": net_profit,
+                    "operating_cash_flow": net_profit * rng.uniform(0.7, 1.3),
                 }
             )
 
@@ -117,11 +156,25 @@ def generate_sample_bundle(
             }
         )
 
+    benchmark = (
+        pd.DataFrame(rows)
+        .groupby("trade_date", as_index=False)["close"]
+        .mean()
+        .assign(index_code="000905.SH")
+    )[["trade_date", "index_code", "close"]]
+
     return {
+        "trade_calendar": trade_calendar,
+        "stock_basic": stock_basic,
         "daily_bar": pd.DataFrame(rows),
         "daily_basic": pd.DataFrame(basic_rows),
         "industry": pd.DataFrame(industry_rows),
+        "index_member": index_member,
         "financial_indicator": pd.DataFrame(financial_rows),
+        "suspension": pd.DataFrame(columns=["ts_code", "suspend_date", "resume_date"]),
+        "st_status": pd.DataFrame(columns=["ts_code", "start_date", "end_date"]),
+        "limit_price": pd.DataFrame(limit_rows),
+        "benchmark_index": benchmark,
         "news_event": pd.DataFrame(news_rows),
     }
 

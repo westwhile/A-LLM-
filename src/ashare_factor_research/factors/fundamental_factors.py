@@ -10,13 +10,25 @@ def align_financial_to_dates(
     trade_dates: pd.DatetimeIndex,
     financial_indicator: pd.DataFrame,
 ) -> pd.DataFrame:
+    base_columns = ["usable_date", "ts_code", "roe", "gross_margin", "debt_ratio", "revenue_yoy", "profit_yoy"]
     require_columns(
         financial_indicator,
-        ["usable_date", "ts_code", "roe", "gross_margin", "debt_ratio", "revenue_yoy", "profit_yoy"],
+        base_columns,
         "financial_indicator",
     )
     rows = []
     fin = financial_indicator.sort_values(["ts_code", "usable_date"]).copy()
+    if "roe_delta" not in fin:
+        fin["roe_delta"] = fin.groupby("ts_code")["roe"].diff()
+    if "gross_margin_stability" not in fin:
+        gross_margin_vol = fin.groupby("ts_code")["gross_margin"].transform(
+            lambda s: s.rolling(4, min_periods=2).std()
+        )
+        fin["gross_margin_stability"] = -gross_margin_vol
+    if "asset_turnover" not in fin and {"operating_revenue", "total_assets"}.issubset(fin.columns):
+        fin["asset_turnover"] = safe_divide(fin["operating_revenue"], fin["total_assets"])
+    if "roa" not in fin and {"net_profit", "total_assets"}.issubset(fin.columns):
+        fin["roa"] = safe_divide(fin["net_profit"], fin["total_assets"])
     for code, stock_fin in fin.groupby("ts_code"):
         stock_fin = stock_fin.set_index("usable_date")
         aligned = stock_fin.reindex(trade_dates, method="ffill")
@@ -36,10 +48,31 @@ def compute_fundamental_factors(
     basic["size"] = np.log(basic["total_mv"].where(basic["total_mv"] > 0))
     basic["bp"] = safe_divide(pd.Series(1.0, index=basic.index), basic["pb"])
     basic["ep"] = safe_divide(pd.Series(1.0, index=basic.index), basic["pe_ttm"])
+    basic["sp"] = safe_divide(pd.Series(1.0, index=basic.index), basic["ps"]) if "ps" in basic else np.nan
 
     aligned_fin = align_financial_to_dates(trade_dates, financial_indicator)
-    keep = ["trade_date", "ts_code", "roe", "gross_margin", "debt_ratio", "revenue_yoy", "profit_yoy"]
+    optional_fin_cols = [
+        "roe",
+        "gross_margin",
+        "debt_ratio",
+        "revenue_yoy",
+        "profit_yoy",
+        "operating_cash_flow",
+        "asset_turnover",
+        "roa",
+        "gross_margin_stability",
+        "roe_delta",
+    ]
+    keep = ["trade_date", "ts_code"] + [col for col in optional_fin_cols if col in aligned_fin]
     merged = basic.merge(aligned_fin[keep], on=["trade_date", "ts_code"], how="left")
+    merged["cfp"] = (
+        safe_divide(merged["operating_cash_flow"], merged["total_mv"])
+        if "operating_cash_flow" in merged
+        else np.nan
+    )
+    for col in ["asset_turnover", "roa", "gross_margin_stability", "roe_delta"]:
+        if col not in merged:
+            merged[col] = np.nan
     return merged[
         [
             "trade_date",
@@ -47,10 +80,16 @@ def compute_fundamental_factors(
             "size",
             "bp",
             "ep",
+            "sp",
+            "cfp",
             "roe",
+            "roa",
             "gross_margin",
+            "gross_margin_stability",
             "debt_ratio",
+            "asset_turnover",
             "revenue_yoy",
             "profit_yoy",
+            "roe_delta",
         ]
     ]

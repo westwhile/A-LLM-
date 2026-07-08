@@ -5,10 +5,13 @@ dependencies:
   - python>=3.10
   - numpy
   - pandas
+  - pillow
   - pyyaml
   - pip
   - pip:
       - akshare
+      - pyarrow
       - pytest
       - matplotlib
+      - reportlab
       - statsmodels

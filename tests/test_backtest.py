@@ -149,6 +149,68 @@ class BacktestTest(unittest.TestCase):
         second_trade = result.trades[result.trades["execution_date"].eq(pd.Timestamp("2022-01-05"))].iloc[0]
         self.assertLessEqual(float(second_trade["portfolio_turnover"]), 0.25)
 
+    def test_event_backtest_min_amount_blocks_low_liquidity_order(self):
+        portfolio = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2022-01-03"]),
+                "ts_code": ["000001.SZ"],
+                "target_weight": [1.0],
+            }
+        )
+        market = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2022-01-03", "2022-01-04"]),
+                "ts_code": ["000001.SZ", "000001.SZ"],
+                "open": [10.0, 10.0],
+                "close": [10.0, 10.0],
+                "amount": [1_000.0, 1_000.0],
+                "up_limit": [11.0, 11.0],
+                "down_limit": [9.0, 9.0],
+                "is_suspended": [False, False],
+            }
+        )
+        result = run_event_backtest(
+            portfolio,
+            market,
+            cost_config=CostConfig(),
+            initial_cash=100_000,
+            min_trade_amount=10_000,
+        )
+        self.assertTrue(result.fills.empty)
+        self.assertEqual(result.orders.iloc[0]["reason"], "low_liquidity")
+
+    def test_event_backtest_participation_limit_caps_quantity(self):
+        portfolio = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2022-01-03"]),
+                "ts_code": ["000001.SZ"],
+                "target_weight": [1.0],
+            }
+        )
+        market = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2022-01-03", "2022-01-04"]),
+                "ts_code": ["000001.SZ", "000001.SZ"],
+                "open": [10.0, 10.0],
+                "close": [10.0, 10.0],
+                "amount": [1_000_000.0, 20_000.0],
+                "up_limit": [11.0, 11.0],
+                "down_limit": [9.0, 9.0],
+                "is_suspended": [False, False],
+            }
+        )
+        no_cost = CostConfig(0.0, 0.0, 0.0, 0.0, 0.0)
+        result = run_event_backtest(
+            portfolio,
+            market,
+            cost_config=no_cost,
+            initial_cash=100_000,
+            max_participation_rate=0.5,
+        )
+        fill = result.fills.iloc[0]
+        self.assertLessEqual(float(fill["notional"]), 10_000.0)
+        self.assertEqual(result.orders.iloc[0]["reason"], "volume_participation_limit")
+
     def test_max_drawdown(self):
         dd = max_drawdown(pd.Series([1.0, 1.1, 0.99, 1.2]))
         self.assertAlmostEqual(dd, -0.1)

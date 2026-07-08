@@ -1,8 +1,17 @@
 price_volume_factors:
   - mom_20
   - mom_60_skip5
+  - mom_120
   - rev_5
+  - rev_20
+  - turnover_chg_20
+  - amount_mom_20
+
+risk_factors:
   - vol_20
+  - vol_60
+  - beta_60
+  - idio_vol_60
   - turnover_20
   - amihud_20
 
@@ -10,13 +19,26 @@ fundamental_factors:
   - size
   - bp
   - ep
+  - sp
+  - cfp
+
+quality_factors:
   - roe
+  - roa
   - gross_margin
+  - gross_margin_stability
+  - debt_ratio
+  - asset_turnover
+
+growth_factors:
   - revenue_yoy
   - profit_yoy
+  - roe_delta
 
 money_flow_factors:
+  - mf_5
   - mf_20
+  - large_order_mf_20
 
 llm_event_factors:
   - event_sentiment_20

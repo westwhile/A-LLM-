@@ -206,6 +206,12 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Local data fetches and generated run artifacts
+data/raw/
+outputs/
+tmp/
+*.baiduyun.uploading.cfg
+
 # PyPI configuration file
 .pypirc
 

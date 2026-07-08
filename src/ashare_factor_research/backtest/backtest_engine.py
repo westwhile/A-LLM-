@@ -90,6 +90,8 @@ def run_event_backtest(
     initial_cash: float = 1_000_000.0,
     lot_size: int = 100,
     max_turnover: float | None = 0.5,
+    max_participation_rate: float | None = None,
+    min_trade_amount: float | None = None,
 ) -> BacktestResult:
     """Run next-open event backtest with orders, fills, positions, and cash.
 
@@ -156,6 +158,8 @@ def run_event_backtest(
                 cost_config=cost_config,
                 lot_size=lot_size,
                 max_turnover=max_turnover,
+                max_participation_rate=max_participation_rate,
+                min_trade_amount=min_trade_amount,
             )
             positions = rebalance["positions"]
             cash = float(rebalance["cash"])
@@ -225,6 +229,8 @@ def _rebalance_at_open(
     cost_config: CostConfig | None,
     lot_size: int,
     max_turnover: float | None,
+    max_participation_rate: float | None,
+    min_trade_amount: float | None,
 ) -> dict[str, object]:
     open_prices = day_market["open"]
     all_codes = positions.index.union(target_weights.index)
@@ -265,6 +271,8 @@ def _rebalance_at_open(
             day_market=day_market,
             cost_config=cost_config,
             lot_size=lot_size,
+            max_participation_rate=max_participation_rate,
+            min_trade_amount=min_trade_amount,
         )
         next_positions = order_result["positions"]
         next_cash = float(order_result["cash"])
@@ -308,6 +316,8 @@ def _execute_order(
     day_market: pd.DataFrame,
     cost_config: CostConfig | None,
     lot_size: int,
+    max_participation_rate: float | None,
+    min_trade_amount: float | None,
 ) -> dict[str, object]:
     if code not in day_market.index or pd.isna(day_market.at[code, "open"]):
         return _order_result(
@@ -329,8 +339,39 @@ def _execute_order(
 
     row = day_market.loc[code]
     price = float(row["open"])
-    reason = trade_block_reason(row, side)
+    amount = float(row["amount"]) if "amount" in row and pd.notna(row["amount"]) else None
+    if min_trade_amount is not None and (amount is None or amount < min_trade_amount):
+        return _order_result(
+            signal_date,
+            execution_date,
+            code,
+            side,
+            target_weight,
+            current_weight,
+            requested_value,
+            0,
+            0,
+            "unfilled",
+            "low_liquidity",
+            positions,
+            cash,
+            None,
+        )
+    block_reason = trade_block_reason(row, side)
+    audit_reason = ""
     requested_quantity = int(requested_value // (price * lot_size) * lot_size)
+    if max_participation_rate is not None:
+        if max_participation_rate <= 0:
+            raise ValueError("max_participation_rate must be positive")
+        if amount is None:
+            requested_quantity = 0
+            audit_reason = "missing_amount"
+        else:
+            max_value = amount * max_participation_rate
+            max_quantity = int(max_value // (price * lot_size) * lot_size)
+            if max_quantity < requested_quantity:
+                requested_quantity = max_quantity
+                audit_reason = "volume_participation_limit"
     if requested_quantity <= 0:
         return _order_result(
             signal_date,
@@ -343,12 +384,12 @@ def _execute_order(
             0,
             0,
             "unfilled",
-            "lot_size",
+            block_reason or audit_reason or "lot_size",
             positions,
             cash,
             None,
         )
-    if reason:
+    if block_reason:
         return _order_result(
             signal_date,
             execution_date,
@@ -360,7 +401,7 @@ def _execute_order(
             requested_quantity,
             0,
             "unfilled",
-            reason,
+            block_reason,
             positions,
             cash,
             None,
@@ -372,13 +413,17 @@ def _execute_order(
         held_quantity = int(next_positions.reindex([code], fill_value=0.0).iloc[0])
         quantity = min(requested_quantity, held_quantity)
         status = "filled" if quantity == requested_quantity else "partially_filled"
-        reason = "" if status == "filled" else "insufficient_position"
+        reason = audit_reason if status == "filled" and audit_reason == "volume_participation_limit" else ""
+        if status != "filled":
+            reason = "insufficient_position"
     else:
         unit_cost = price * (1.0 + _buy_cost_rate(cost_config))
         affordable_quantity = int(next_cash // (unit_cost * lot_size) * lot_size)
         quantity = min(requested_quantity, affordable_quantity)
         status = "filled" if quantity == requested_quantity else "partially_filled"
-        reason = "" if status == "filled" else "insufficient_cash"
+        reason = audit_reason if status == "filled" and audit_reason == "volume_participation_limit" else ""
+        if status != "filled":
+            reason = "insufficient_cash"
 
     if quantity <= 0:
         return _order_result(
