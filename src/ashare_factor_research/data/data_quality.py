@@ -142,6 +142,23 @@ def _audit_daily_bar(df: pd.DataFrame, table_name: str) -> list[dict[str, object
             invalid = int((pd.to_numeric(df[col], errors="coerce") < 0).sum())
             if invalid:
                 issues.append(_issue(table_name, f"negative:{col}", "blocking", invalid, "Volume/amount cannot be negative."))
+    if "amount" in df.columns:
+        amount = pd.to_numeric(df["amount"], errors="coerce")
+        zero_amount = int(amount.eq(0).sum())
+        if zero_amount:
+            issues.append(_issue(table_name, "zero_amount", "warning", zero_amount, "Zero turnover requires suspension/stale-price review."))
+        if {"ts_code", "trade_date"}.issubset(df.columns):
+            ordered = df.assign(_amount=amount).sort_values(["ts_code", "trade_date"])
+            ratio = ordered.groupby("ts_code")["_amount"].pct_change().abs()
+            spikes = int(ratio.gt(20).sum())
+            if spikes:
+                issues.append(_issue(table_name, "amount_spikes", "warning", spikes, "Absolute day-on-day amount change exceeds 2000%."))
+    if {"ts_code", "trade_date", "adj_factor"}.issubset(df.columns):
+        ordered = df.sort_values(["ts_code", "trade_date"])
+        jumps = ordered.groupby("ts_code")["adj_factor"].pct_change().abs()
+        jump_count = int(jumps.gt(0.5).sum())
+        if jump_count:
+            issues.append(_issue(table_name, "adj_factor_jumps", "warning", jump_count, "Adjustment-factor jump exceeds 50%; verify corporate actions."))
     return issues
 
 
@@ -193,6 +210,76 @@ def audit_tables(
         ]
         if missing_rows:
             issues = pd.concat([issues, pd.DataFrame(missing_rows)], ignore_index=True)
+    cross = _audit_cross_table_consistency(tables)
+    if cross:
+        issues = pd.concat([issues, pd.DataFrame(cross)], ignore_index=True)
+    return issues
+
+
+def _overlapping_intervals(
+    df: pd.DataFrame,
+    group_cols: list[str],
+    start_col: str,
+    end_col: str,
+) -> int:
+    if df.empty or not set([*group_cols, start_col, end_col]).issubset(df.columns):
+        return 0
+    count = 0
+    data = df.copy()
+    data[start_col] = pd.to_datetime(data[start_col])
+    data[end_col] = pd.to_datetime(data[end_col])
+    for _, part in data.sort_values([*group_cols, start_col]).groupby(group_cols, dropna=False):
+        previous_end: pd.Timestamp | None = None
+        for row in part.itertuples(index=False):
+            start = getattr(row, start_col)
+            end = getattr(row, end_col)
+            effective_end = pd.Timestamp.max if pd.isna(end) else pd.Timestamp(end)
+            if previous_end is not None and start < previous_end:
+                count += 1
+            if previous_end is None or effective_end > previous_end:
+                previous_end = effective_end
+    return count
+
+
+def _audit_cross_table_consistency(tables: dict[str, pd.DataFrame]) -> list[dict[str, object]]:
+    issues: list[dict[str, object]] = []
+    daily = tables.get("daily_bar")
+    calendar = tables.get("trade_calendar")
+    if daily is not None and not daily.empty:
+        dates = pd.to_datetime(daily["trade_date"])
+        coverage = daily.groupby(dates)["ts_code"].nunique()
+        issues.append(_issue("daily_bar", "daily_asset_coverage_min", "info", int(coverage.min()), "Minimum stocks observed on a trading date."))
+        if calendar is not None and not calendar.empty:
+            cal = calendar.copy()
+            if "is_open" in cal:
+                cal = cal[cal["is_open"].astype(bool)]
+            open_dates = set(pd.to_datetime(cal["trade_date"]))
+            outside = int((~dates.isin(open_dates)).sum())
+            issues.append(_issue("daily_bar", "dates_outside_trade_calendar", "blocking" if outside else "ok", outside, "Daily bars must fall on open trading days."))
+        for name in ["daily_basic", "industry", "limit_price"]:
+            other = tables.get(name)
+            if other is None or other.empty or "trade_date" not in other:
+                continue
+            daily_keys = pd.MultiIndex.from_frame(daily[["trade_date", "ts_code"]].assign(trade_date=lambda x: pd.to_datetime(x["trade_date"])))
+            other_keys = pd.MultiIndex.from_frame(other[["trade_date", "ts_code"]].assign(trade_date=lambda x: pd.to_datetime(x["trade_date"])))
+            missing_rate = float((~daily_keys.isin(other_keys)).mean()) if len(daily_keys) else 0.0
+            severity = "blocking" if name in {"daily_basic", "industry"} and missing_rate > 0.2 else ("warning" if missing_rate else "ok")
+            issues.append(_issue(name, "daily_bar_key_missing_rate", severity, round(missing_rate, 6), "Share of daily-bar asset-date keys missing from this table."))
+    industry = tables.get("industry")
+    if industry is not None and "industry_code" in industry:
+        missing = float(industry["industry_code"].isna().mean()) if len(industry) else 0.0
+        issues.append(_issue("industry", "industry_code_missing_rate", "blocking" if missing > 0.2 else ("warning" if missing else "ok"), round(missing, 6), "Industry coverage at signal time."))
+    intervals = [
+        ("index_member", ["index_code", "ts_code"], "in_date", "out_date"),
+        ("st_status", ["ts_code"], "start_date", "end_date"),
+        ("suspension", ["ts_code"], "suspend_date", "resume_date"),
+    ]
+    for table, groups, start, end in intervals:
+        frame = tables.get(table)
+        if frame is None:
+            continue
+        overlap = _overlapping_intervals(frame, groups, start, end)
+        issues.append(_issue(table, "overlapping_intervals", "blocking" if overlap else "ok", overlap, "Intervals for the same entity must not overlap."))
     return issues
 
 

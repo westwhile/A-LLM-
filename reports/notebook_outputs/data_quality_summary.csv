@@ -1,6 +1,13 @@
 table,rows,columns,missing_cells,duplicate_key_rows,start_date,end_date
+trade_calendar,180,2,0,0,2022-01-03,2022-09-09
+stock_basic,60,5,60,0,,
 daily_bar,10800,13,0,0,2022-01-03,2022-09-09
 daily_basic,10800,9,0,0,2022-01-03,2022-09-09
 industry,10800,4,0,0,2022-01-03,2022-09-09
+index_member,60,5,60,0,,
 financial_indicator,180,13,0,120,,
+suspension,0,3,0,0,,
+st_status,0,3,0,0,,
+limit_price,10800,4,0,0,2022-01-03,2022-09-09
+benchmark_index,180,3,0,0,2022-01-03,2022-09-09
 news_event,20,7,0,0,2022-03-28,2022-04-22

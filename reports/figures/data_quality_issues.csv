@@ -1,0 +1,55 @@
+table,check,severity,value,detail
+trade_calendar,row_count,info,180,Rows available for audit.
+trade_calendar,primary_key_duplicates,ok,0,Primary key: ['trade_date'].
+trade_calendar,date_range:trade_date,info,2022-01-03..2022-09-09,Observed date range.
+stock_basic,row_count,info,60,Rows available for audit.
+stock_basic,primary_key_duplicates,ok,0,Primary key: ['ts_code'].
+stock_basic,date_range:list_date,info,2021-01-03..2021-01-03,Observed date range.
+stock_basic,asset_count,info,60,Unique stock count by ts_code.
+daily_bar,row_count,info,10800,Rows available for audit.
+daily_bar,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'ts_code']."
+daily_bar,date_range:trade_date,info,2022-01-03..2022-09-09,Observed date range.
+daily_bar,asset_count,info,60,Unique stock count by ts_code.
+daily_basic,row_count,info,10800,Rows available for audit.
+daily_basic,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'ts_code']."
+daily_basic,date_range:trade_date,info,2022-01-03..2022-09-09,Observed date range.
+daily_basic,asset_count,info,60,Unique stock count by ts_code.
+industry,row_count,info,10800,Rows available for audit.
+industry,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'ts_code']."
+industry,date_range:trade_date,info,2022-01-03..2022-09-09,Observed date range.
+industry,asset_count,info,60,Unique stock count by ts_code.
+index_member,row_count,info,60,Rows available for audit.
+index_member,primary_key_duplicates,ok,0,"Primary key: ['index_code', 'ts_code', 'in_date']."
+index_member,date_range:in_date,info,2022-01-03..2022-01-03,Observed date range.
+index_member,asset_count,info,60,Unique stock count by ts_code.
+financial_indicator,row_count,info,180,Rows available for audit.
+financial_indicator,primary_key_duplicates,ok,0,"Primary key: ['ts_code', 'report_period', 'ann_date']."
+financial_indicator,date_range:report_period,info,2021-12-31..2022-06-30,Observed date range.
+financial_indicator,date_range:ann_date,info,2022-04-20..2022-08-25,Observed date range.
+financial_indicator,date_range:usable_date,info,2022-04-21..2022-08-26,Observed date range.
+financial_indicator,asset_count,info,60,Unique stock count by ts_code.
+suspension,row_count,info,0,Rows available for audit.
+suspension,primary_key_duplicates,ok,0,"Primary key: ['ts_code', 'suspend_date']."
+suspension,asset_count,info,0,Unique stock count by ts_code.
+st_status,row_count,info,0,Rows available for audit.
+st_status,primary_key_duplicates,ok,0,"Primary key: ['ts_code', 'start_date']."
+st_status,asset_count,info,0,Unique stock count by ts_code.
+limit_price,row_count,info,10800,Rows available for audit.
+limit_price,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'ts_code']."
+limit_price,date_range:trade_date,info,2022-01-03..2022-09-09,Observed date range.
+limit_price,asset_count,info,60,Unique stock count by ts_code.
+benchmark_index,row_count,info,180,Rows available for audit.
+benchmark_index,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'index_code']."
+benchmark_index,date_range:trade_date,info,2022-01-03..2022-09-09,Observed date range.
+news_event,row_count,info,20,Rows available for audit.
+news_event,primary_key_duplicates,ok,0,"Primary key: ['stock_code', 'publish_date', 'event_type']."
+news_event,date_range:publish_date,info,2022-03-28..2022-04-22,Observed date range.
+daily_bar,daily_asset_coverage_min,info,60.0,Minimum stocks observed on a trading date.
+daily_bar,dates_outside_trade_calendar,ok,0.0,Daily bars must fall on open trading days.
+daily_basic,daily_bar_key_missing_rate,ok,0.0,Share of daily-bar asset-date keys missing from this table.
+industry,daily_bar_key_missing_rate,ok,0.0,Share of daily-bar asset-date keys missing from this table.
+limit_price,daily_bar_key_missing_rate,ok,0.0,Share of daily-bar asset-date keys missing from this table.
+industry,industry_code_missing_rate,ok,0.0,Industry coverage at signal time.
+index_member,overlapping_intervals,ok,0.0,Intervals for the same entity must not overlap.
+st_status,overlapping_intervals,ok,0.0,Intervals for the same entity must not overlap.
+suspension,overlapping_intervals,ok,0.0,Intervals for the same entity must not overlap.

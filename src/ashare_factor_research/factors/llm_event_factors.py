@@ -42,12 +42,14 @@ def compute_event_sentiment_factor(
         return pd.DataFrame(columns=["trade_date", "ts_code", "event_sentiment_20"])
     ev = events.copy()
     ev["publish_date"] = pd.to_datetime(ev["publish_date"])
+    dedupe_cols = ["event_id"] if "event_id" in ev else ["stock_code", "publish_date", "event_type"]
+    ev = ev.sort_values("publish_date").drop_duplicates(dedupe_cols, keep="last")
     ev["ts_code"] = ev["stock_code"]
     ev["weighted_score"] = ev["sentiment"].map(SENTIMENT_SCORE) * ev["confidence"].astype(float)
     rows = []
     for date in trade_dates:
         start = date - pd.Timedelta(days=lookback_days)
-        window = ev[(ev["publish_date"] < date) & (ev["publish_date"] >= start)]
+        window = ev[(ev["publish_date"] <= date) & (ev["publish_date"] >= start)]
         if window.empty:
             continue
         score = window.groupby("ts_code", as_index=False)["weighted_score"].sum()

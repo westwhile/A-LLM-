@@ -12,6 +12,15 @@ research:
   default_horizon: 20
   signal_timing: "close_after_signal_date"
   execution_timing: "next_trade_date"
+  walk_forward:
+    enabled: true
+    train_months: 24
+    validation_months: 6
+    min_train_dates: 6
+    min_abs_ic: 0.01
+    min_coverage: 0.30
+    require_validation_sign: true
+    max_factors: 12
 
 universe:
   index_code: "000905.SH"
@@ -20,3 +29,9 @@ universe:
   exclude_suspended: true
   exclude_limit_up_for_buy: true
   exclude_limit_down_for_sell: true
+
+llm:
+  dry_run: true
+  review_sample_size: 50
+  minimum_review_pass_ratio: 0.80
+  use_as_signal_only_after_review: true

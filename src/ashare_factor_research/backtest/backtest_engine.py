@@ -92,6 +92,7 @@ def run_event_backtest(
     max_turnover: float | None = 0.5,
     max_participation_rate: float | None = None,
     min_trade_amount: float | None = None,
+    execution_delay_days: int = 1,
 ) -> BacktestResult:
     """Run next-open event backtest with orders, fills, positions, and cash.
 
@@ -108,6 +109,8 @@ def run_event_backtest(
         raise ValueError("lot_size must be positive")
     if initial_cash <= 0:
         raise ValueError("initial_cash must be positive")
+    if execution_delay_days < 1:
+        raise ValueError("execution_delay_days must be at least 1")
 
     market = mark_tradability(market_df.copy())
     market[date_col] = pd.to_datetime(market[date_col])
@@ -121,7 +124,7 @@ def run_event_backtest(
     signals = portfolio_df.copy()
     signals[date_col] = pd.to_datetime(signals[date_col])
     for signal_date, part in signals.groupby(date_col):
-        execution_date = next_trade_date(trade_dates, pd.Timestamp(signal_date))
+        execution_date = _delayed_trade_date(trade_dates, pd.Timestamp(signal_date), execution_delay_days)
         if execution_date is None:
             continue
         target = part.set_index("ts_code")["target_weight"].astype(float)
@@ -216,6 +219,15 @@ def run_event_backtest(
         fills=pd.DataFrame(fill_rows),
         positions=pd.DataFrame(position_rows),
     )
+
+
+def _delayed_trade_date(
+    trade_dates: pd.DatetimeIndex,
+    signal_date: pd.Timestamp,
+    delay: int,
+) -> pd.Timestamp | None:
+    later = trade_dates[trade_dates > pd.Timestamp(signal_date)]
+    return pd.Timestamp(later[delay - 1]) if len(later) >= delay else None
 
 
 def _rebalance_at_open(

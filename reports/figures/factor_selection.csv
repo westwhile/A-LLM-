@@ -1,0 +1,31 @@
+factor,direction,mean_ic,icir,selected,reason
+mf_20,1,0.18164723175792563,1.3304560474218379,True,direction is positive; selected for next-stage research
+large_order_mf_20,1,0.17641101022685518,1.3629647833414875,False,direction is positive; correlation conflict with mf_20 (0.95)
+turnover_chg_20,-1,-0.17063830862108167,-2.4193189101733235,True,direction is negative; selected for next-stage research
+size,1,0.16006807446512925,1.3329950640583443,True,direction is positive; selected for next-stage research
+roe,1,0.15338566268407897,2.0911696302275473,True,direction is positive; selected for next-stage research
+amount_mom_20,1,0.13304705852635837,1.479408033461289,True,direction is positive; selected for next-stage research
+roa,1,0.13280355654348433,1.4883495872081884,True,direction is positive; selected for next-stage research
+revenue_yoy,1,0.12349402611836624,1.1893993044495137,True,direction is positive; selected for next-stage research
+debt_ratio,1,0.11009724923589888,1.8070695587661372,True,direction is positive; selected for next-stage research
+roe_delta,1,0.10052375659905533,1.12609554086915,True,direction is positive; selected for next-stage research
+ep,1,0.0921936649069186,0.7851642135834286,True,direction is positive; selected for next-stage research
+sp,1,0.08160739094192833,0.7811546765628762,True,direction is positive; selected for next-stage research
+bp,1,0.07728535704362324,0.6961240185286052,True,direction is positive; selected for next-stage research
+gross_margin_stability,1,0.07634620727979996,0.5427691822407266,True,direction is positive; selected for next-stage research
+cfp,1,0.0699138649624896,0.681532633396892,True,direction is positive; selected for next-stage research
+asset_turnover,1,0.06140316754654072,0.9192021477539064,True,direction is positive; selected for next-stage research
+profit_yoy,1,0.05367046401778273,0.5531004344047448,True,direction is positive; selected for next-stage research
+turnover_20,-1,-0.0438939131837697,-0.5444521082210662,True,direction is negative; selected for next-stage research
+mf_5,1,0.0402831195800003,0.23831696684706993,True,direction is positive; selected for next-stage research
+vol_60,-1,-0.03651014170602946,-1.0732841465173955,True,direction is negative; selected for next-stage research
+rev_5,1,0.03346167586234272,0.3010697679485383,True,direction is positive; selected for next-stage research
+mom_20,1,0.02085579327590998,0.2411764412706597,True,direction is positive; selected for next-stage research
+rev_20,-1,-0.02085579327590998,-0.2411764412706597,False,direction is negative; correlation conflict with mom_20 (1.00)
+gross_margin,1,0.013332870241733819,0.17202184857480218,True,direction is positive; selected for next-stage research
+vol_20,-1,-0.010155150624277354,-0.14082407540161107,True,direction is negative; selected for next-stage research
+beta_60,-1,-0.002717926696809724,-0.033768742624522334,False,abs IC below 0.01; abs ICIR below 0.05
+amihud_20,-1,-0.0015721212881714482,-0.0194415934102034,False,abs IC below 0.01; abs ICIR below 0.05
+idio_vol_60,0,,,False,abs IC below 0.01; abs ICIR below 0.05
+mom_60_skip5,0,,,False,abs IC below 0.01; abs ICIR below 0.05
+mom_120,0,,,False,abs IC below 0.01; abs ICIR below 0.05

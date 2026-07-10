@@ -231,3 +231,22 @@ def save_report_artifacts(
             out / "industry_exposure.csv", index=False
         )
         _save_bar_chart(pd.Series(dtype=float), "Sample latest industry exposure", out / "industry_exposure.png")
+
+
+def save_research_extension_charts(
+    output_dir: str | Path,
+    factor_decay: pd.DataFrame | None = None,
+    robustness: pd.DataFrame | None = None,
+) -> None:
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if factor_decay is not None and not factor_decay.empty and {"horizon", "mean_ic"}.issubset(factor_decay.columns):
+        values = factor_decay.groupby("horizon")["mean_ic"].mean().sort_index()
+        _save_line_chart(values, "Mean factor IC decay by horizon", out / "factor_decay.png")
+    else:
+        _save_line_chart(pd.Series(dtype=float), "Mean factor IC decay by horizon", out / "factor_decay.png")
+    if robustness is not None and not robustness.empty:
+        costs = robustness.groupby("cost_case")["total_return"].mean()
+        _save_bar_chart(costs, "Average total return by cost scenario", out / "cost_scenarios.png")
+        capacity = robustness.dropna(subset=["participation_rate"]).groupby("participation_rate")["total_return"].mean()
+        _save_line_chart(capacity, "Average total return by participation cap", out / "capacity_scenarios.png")

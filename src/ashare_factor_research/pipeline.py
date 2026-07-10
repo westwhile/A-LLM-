@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 import pandas as pd
+from ashare_factor_research import __version__
 from ashare_factor_research.analysis.attribution import (
+    active_industry_exposure,
     cost_attribution,
     industry_exposure,
     industry_return_attribution,
@@ -14,11 +18,14 @@ from ashare_factor_research.analysis.attribution import (
     security_return_contribution,
     top_bottom_contributors,
 )
+from ashare_factor_research.analysis.drawdown import drawdown_contribution, max_drawdown_period
 from ashare_factor_research.analysis.performance import calc_performance
-from ashare_factor_research.analysis.report_charts import save_report_artifacts
+from ashare_factor_research.analysis.report_charts import save_report_artifacts, save_research_extension_charts
 from ashare_factor_research.backtest.backtest_engine import run_event_backtest
 from ashare_factor_research.backtest.cost_model import CostConfig
 from ashare_factor_research.backtest.portfolio_builder import build_portfolio
+from ashare_factor_research.backtest.robustness import run_execution_scenarios, summarize_unfilled_orders
+from ashare_factor_research.config import ConfigBundle, load_config_bundle
 from ashare_factor_research.data.data_cleaner import add_adjusted_prices, add_forward_returns, filter_universe
 from ashare_factor_research.data.data_loader import LocalDataLoader
 from ashare_factor_research.data.data_quality import (
@@ -36,6 +43,7 @@ from ashare_factor_research.factor_testing.ic_analysis import (
     calc_regime_ic_summary,
 )
 from ashare_factor_research.factor_testing.ic_test import calc_factor_ic_table, calc_ic
+from ashare_factor_research.factor_testing.walk_forward import build_walk_forward_scores
 from ashare_factor_research.factors.coverage import audit_factor_coverage
 from ashare_factor_research.factors.factor_processor import factor_correlation, process_factors
 from ashare_factor_research.factors.fundamental_factors import compute_fundamental_factors
@@ -49,11 +57,17 @@ from ashare_factor_research.factors.registry import (
     get_factor_specs,
     load_factor_config,
 )
+from ashare_factor_research.llm.audit import (
+    label_quality_passes,
+    sample_labels_for_review,
+    write_llm_event_audit_report,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_FACTOR_CONFIG = PROJECT_ROOT / "config" / "factor_config.yaml"
 DEFAULT_PROJECT_CONFIG = PROJECT_ROOT / "config" / "project_config.yaml"
+DEFAULT_BACKTEST_CONFIG = PROJECT_ROOT / "config" / "backtest_config.yaml"
 
 
 def _load_enabled_factor_specs(config_path: str | Path | None = None) -> tuple[dict[str, object], list[FactorSpec]]:
@@ -114,6 +128,7 @@ def build_factor_panel(
     data: dict[str, pd.DataFrame],
     horizon: int = 20,
     config_path: str | Path | None = None,
+    index_code: str = "000905.SH",
 ) -> tuple[pd.DataFrame, list[str]]:
     _, factor_specs = _load_enabled_factor_specs(config_path)
     daily_bar = add_adjusted_prices(_prepare_market_data(data))
@@ -125,7 +140,7 @@ def build_factor_panel(
         index_member=data.get("index_member"),
         st_status=data.get("st_status"),
         suspension=data.get("suspension"),
-        index_code="000905.SH",
+        index_code=index_code,
         trade_dates=_trade_dates_from_data(data, daily_bar),
     )
     trade_dates = _trade_dates_from_data(data, daily_bar)
@@ -208,11 +223,15 @@ def _write_manifest(data: dict[str, pd.DataFrame], output_path: Path, mode: str)
     return manifest
 
 
-def _copy_config_snapshot(run_dir: Path) -> None:
-    if DEFAULT_PROJECT_CONFIG.exists():
-        shutil.copyfile(DEFAULT_PROJECT_CONFIG, run_dir / "config_snapshot.yaml")
-    else:
-        (run_dir / "config_snapshot.yaml").write_text("{}\n", encoding="utf-8")
+def _copy_config_snapshots(run_dir: Path, bundle: ConfigBundle) -> None:
+    names = {
+        "project": "project_config_snapshot.yaml",
+        "factor": "factor_config_snapshot.yaml",
+        "backtest": "backtest_config_snapshot.yaml",
+    }
+    for key, name in names.items():
+        shutil.copyfile(bundle.paths[key], run_dir / name)
+    shutil.copyfile(bundle.paths["project"], run_dir / "config_snapshot.yaml")
 
 
 def _save_diagnostics(
@@ -257,6 +276,7 @@ def _save_attribution(
     market_df: pd.DataFrame,
     trades: pd.DataFrame,
     nav: pd.DataFrame,
+    cost_config: CostConfig,
 ) -> dict[str, pd.DataFrame]:
     returns = add_adjusted_prices(market_df)[["trade_date", "ts_code", "return_1d"]]
     industry = processed[["trade_date", "ts_code", "industry_code"]].drop_duplicates()
@@ -268,13 +288,20 @@ def _save_attribution(
     top_contrib, bottom_contrib = top_bottom_contributors(security_contrib)
     industry_attr = industry_return_attribution(portfolio, returns, industry)
     size_attr = market_cap_bucket_attribution(portfolio, returns, processed[["trade_date", "ts_code", "size"]].rename(columns={"size": "total_mv"}))
-    cost_summary = cost_attribution(trades, nav)
+    cost_summary = cost_attribution(trades, nav, cost_config=cost_config)
+    nav_series = nav.assign(trade_date=pd.to_datetime(nav["trade_date"])).set_index("trade_date")["nav"]
+    worst = max_drawdown_period(nav_series)
+    if pd.notna(worst.get("start")) and pd.notna(worst.get("trough")):
+        drawdown_attr = drawdown_contribution(security_contrib, worst["start"], worst["trough"])
+    else:
+        drawdown_attr = pd.DataFrame(columns=["ts_code", "return_contribution"])
     security_contrib.to_csv(out / "security_return_contribution.csv", index=False)
     top_contrib.to_csv(out / "top_contributors.csv", index=False)
     bottom_contrib.to_csv(out / "bottom_contributors.csv", index=False)
     industry_attr.to_csv(out / "industry_return_attribution.csv", index=False)
     size_attr.to_csv(out / "market_cap_bucket_attribution.csv", index=False)
     cost_summary.to_csv(out / "cost_attribution.csv", index=False)
+    drawdown_attr.to_csv(out / "drawdown_contribution.csv", index=False)
     return {
         "security_contribution": security_contrib,
         "top_contributors": top_contrib,
@@ -282,25 +309,62 @@ def _save_attribution(
         "industry_attribution": industry_attr,
         "market_cap_attribution": size_attr,
         "cost_summary": cost_summary,
+        "drawdown_contribution": drawdown_attr,
     }
+
+
+def _benchmark_industry_exposure(
+    portfolio_dates: pd.Series,
+    index_member: pd.DataFrame | None,
+    industry: pd.DataFrame,
+    index_code: str,
+) -> pd.DataFrame:
+    if index_member is None or index_member.empty:
+        return pd.DataFrame(columns=["trade_date", "industry_code", "benchmark_weight"])
+    members = index_member.copy()
+    members["in_date"] = pd.to_datetime(members["in_date"])
+    members["out_date"] = pd.to_datetime(members["out_date"])
+    members = members[members["index_code"].eq(index_code)]
+    ind = industry.copy()
+    ind["trade_date"] = pd.to_datetime(ind["trade_date"])
+    rows = []
+    for date in pd.DatetimeIndex(pd.to_datetime(portfolio_dates).unique()):
+        active = members[(members["in_date"] <= date) & (members["out_date"].isna() | (date < members["out_date"]))].copy()
+        if active.empty:
+            continue
+        raw_weight = active["weight"] if "weight" in active else pd.Series(1.0, index=active.index)
+        active["benchmark_weight"] = pd.to_numeric(raw_weight, errors="coerce").fillna(0.0)
+        if active["benchmark_weight"].sum() <= 0:
+            active["benchmark_weight"] = 1.0
+        active["benchmark_weight"] /= active["benchmark_weight"].sum()
+        day_industry = ind[ind["trade_date"].eq(date)][["ts_code", "industry_code"]]
+        merged = active.merge(day_industry, on="ts_code", how="left")
+        grouped = merged.groupby("industry_code", dropna=False, as_index=False)["benchmark_weight"].sum()
+        grouped["trade_date"] = date
+        rows.append(grouped)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["trade_date", "industry_code", "benchmark_weight"])
 
 
 def run_sample_pipeline(
     data_dir: str | Path = "data/sample",
     output_dir: str | Path = "reports/figures",
-    horizon: int = 20,
-    top_n: int = 10,
-    max_weight: float = 0.2,
+    horizon: int | None = None,
+    top_n: int | None = None,
+    max_weight: float | None = None,
     config_path: str | Path | None = None,
+    project_config_path: str | Path | None = None,
+    backtest_config_path: str | Path | None = None,
 ) -> dict[str, object]:
+    bundle = load_config_bundle(project_config_path, config_path, backtest_config_path)
     data = LocalDataLoader(data_dir).load_all()
     return _run_pipeline_core(
         data=data,
         output_dir=output_dir,
-        horizon=horizon,
-        top_n=top_n,
-        max_weight=max_weight,
+        horizon=horizon or bundle.horizon,
+        top_n=top_n or bundle.top_n,
+        max_weight=max_weight or bundle.max_weight,
         config_path=config_path,
+        config_bundle=bundle,
         mode="sample",
         fail_on_quality=False,
     )
@@ -310,12 +374,15 @@ def run_research_pipeline(
     data_dir: str | Path = "data/sample",
     output_root: str | Path = "outputs/runs",
     mode: str = "sample",
-    horizon: int = 20,
-    top_n: int = 10,
-    max_weight: float = 0.2,
+    horizon: int | None = None,
+    top_n: int | None = None,
+    max_weight: float | None = None,
     config_path: str | Path | None = None,
+    project_config_path: str | Path | None = None,
+    backtest_config_path: str | Path | None = None,
     run_id: str | None = None,
     fail_on_quality: bool | None = None,
+    robustness: bool = False,
 ) -> dict[str, object]:
     if mode not in {"sample", "real"}:
         raise ValueError("mode must be 'sample' or 'real'")
@@ -324,19 +391,24 @@ def run_research_pipeline(
     figures_dir = run_dir / "figures"
     run_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
+    bundle = load_config_bundle(project_config_path, config_path, backtest_config_path)
+    if mode == "real" and not (Path(data_dir) / "data_manifest.json").exists():
+        raise ValueError("Real mode requires data_manifest.json produced by import-data.")
     data = LocalDataLoader(data_dir, create_if_missing=mode == "sample").load_all()
     result = _run_pipeline_core(
         data=data,
         output_dir=figures_dir,
-        horizon=horizon,
-        top_n=top_n,
-        max_weight=max_weight,
+        horizon=horizon or bundle.horizon,
+        top_n=top_n or bundle.top_n,
+        max_weight=max_weight or bundle.max_weight,
         config_path=config_path,
+        config_bundle=bundle,
         mode=mode,
         fail_on_quality=fail_on_quality if fail_on_quality is not None else mode == "real",
+        robustness=robustness,
     )
-    _copy_config_snapshot(run_dir)
-    _write_manifest(data, run_dir / "data_manifest.json", mode)
+    _copy_config_snapshots(run_dir, bundle)
+    manifest = _write_manifest(data, run_dir / "data_manifest.json", mode)
     for name in ["metrics", "orders", "fills", "positions"]:
         frame_or_dict = result[name if name != "metrics" else "metrics"]
         if isinstance(frame_or_dict, dict):
@@ -348,6 +420,8 @@ def run_research_pipeline(
         if src.exists():
             shutil.copyfile(src, run_dir / quality_name)
     result["run_dir"] = run_dir
+    _write_run_summary(run_dir, result, bundle, mode, run_name)
+    _write_run_metadata(run_dir, result, bundle, mode, run_name, manifest)
     return result
 
 
@@ -358,8 +432,10 @@ def _run_pipeline_core(
     top_n: int,
     max_weight: float,
     config_path: str | Path | None,
+    config_bundle: ConfigBundle,
     mode: str,
     fail_on_quality: bool,
+    robustness: bool = False,
 ) -> dict[str, object]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -369,7 +445,22 @@ def _run_pipeline_core(
         raise ValueError(f"Blocking data-quality issues found. See {out / 'data_quality_report.md'}")
 
     factor_config, factor_specs = _load_enabled_factor_specs(config_path)
-    factor_panel, factor_cols = build_factor_panel(data, horizon=horizon, config_path=config_path)
+    project_meta = config_bundle.project.get("project", {})
+    universe_config = config_bundle.project.get("universe", {})
+    index_code = str(universe_config.get("index_code", project_meta.get("benchmark", "000905.SH")))
+    factor_panel, factor_cols = build_factor_panel(data, horizon=horizon, config_path=config_path, index_code=index_code)
+    llm_config = config_bundle.project.get("llm", {})
+    labels = data.get("news_event", pd.DataFrame()).copy()
+    if not labels.empty:
+        if "event_id" not in labels:
+            labels["event_id"] = labels.reset_index().index.map(lambda value: f"event-{value:06d}")
+        review = sample_labels_for_review(labels, sample_size=int(llm_config.get("review_sample_size", 50)))
+        review.to_csv(out / "llm_label_audit.csv", index=False)
+        write_llm_event_audit_report(review, out / "llm_event_audit.md")
+        if bool(llm_config.get("use_as_signal_only_after_review", True)) and not label_quality_passes(
+            review, float(llm_config.get("minimum_review_pass_ratio", 0.8))
+        ):
+            factor_cols = [name for name in factor_cols if not name.startswith("event_")]
     raw_coverage = audit_factor_coverage(factor_panel, factor_cols)
     processing_config = factor_config.get("processing", {}) if isinstance(factor_config.get("processing", {}), dict) else {}
     min_coverage = 1.0 - float(processing_config.get("max_missing_ratio_by_date", 0.7))
@@ -397,20 +488,90 @@ def _run_pipeline_core(
     corr = factor_correlation(processed, factor_cols)
 
     rebal_dates = month_end_rebalance_dates(get_trade_dates(data["daily_bar"]))
-    score_df = processed[processed["trade_date"].isin(rebal_dates)][["trade_date", "ts_code", "score"]].dropna()
-    portfolio = build_portfolio(score_df, top_n=top_n, max_weight=max_weight)
+    wf_config = config_bundle.project.get("research", {}).get("walk_forward", {})
+    walk_forward = build_walk_forward_scores(
+        processed,
+        factor_cols,
+        rebal_dates,
+        return_col,
+        train_months=int(wf_config.get("train_months", 24)),
+        validation_months=int(wf_config.get("validation_months", 6)),
+        min_train_dates=int(wf_config.get("min_train_dates", 6)),
+        min_abs_ic=float(wf_config.get("min_abs_ic", 0.01)),
+        min_coverage=float(wf_config.get("min_coverage", min_coverage)),
+        require_validation_sign=bool(wf_config.get("require_validation_sign", True)),
+        max_factors=wf_config.get("max_factors"),
+    )
+    for name, frame in walk_forward.items():
+        frame.to_csv(out / f"walk_forward_{name}.csv", index=False)
+    score_df = walk_forward["scores"][["trade_date", "ts_code", "score"]].dropna()
+    if score_df.empty:
+        if mode == "real":
+            raise ValueError("Walk-forward configuration produced no out-of-sample scores.")
+        score_df = processed[processed["trade_date"].isin(rebal_dates)][["trade_date", "ts_code", "score"]].dropna()
+    score_df = score_df.merge(
+        processed[["trade_date", "ts_code", "industry_code"]].drop_duplicates(),
+        on=["trade_date", "ts_code"],
+        how="left",
+    )
+    portfolio_config = config_bundle.backtest.get("portfolio", {})
+    portfolio = build_portfolio(
+        score_df,
+        top_n=top_n,
+        max_weight=max_weight,
+        min_holding_count=min(top_n, int(portfolio_config.get("min_holding_count", top_n))),
+        industry_col="industry_code",
+        max_industry_weight=float(portfolio_config.get("max_industry_weight", 1.0)),
+    )
     market_df = add_adjusted_prices(_prepare_market_data(data))
-    backtest = run_event_backtest(portfolio, market_df, cost_config=CostConfig())
+    execution = config_bundle.backtest.get("execution", {})
+    backtest = run_event_backtest(
+        portfolio,
+        market_df,
+        cost_config=config_bundle.cost,
+        lot_size=int(execution.get("lot_size", 100)),
+        max_turnover=execution.get("max_turnover", 0.5),
+        max_participation_rate=execution.get("max_participation_rate"),
+        min_trade_amount=execution.get("min_trade_amount"),
+    )
     nav = backtest.nav
     trades = backtest.trades
     strategy_returns = nav.assign(trade_date=pd.to_datetime(nav["trade_date"])).set_index("trade_date")["net_return"]
-    benchmark_for_perf = benchmark_return.reindex(strategy_returns.index).dropna() if benchmark_return is not None else None
-    if benchmark_for_perf is not None and len(benchmark_for_perf) != len(strategy_returns):
+    benchmark_for_perf = benchmark_return.reindex(strategy_returns.index) if benchmark_return is not None else None
+    if benchmark_for_perf is not None and benchmark_for_perf.isna().any():
+        if mode == "real":
+            missing_dates = benchmark_for_perf[benchmark_for_perf.isna()].index[:5].date.tolist()
+            raise ValueError(f"Benchmark returns do not strictly cover strategy dates. Missing sample: {missing_dates}")
         benchmark_for_perf = None
     metrics = calc_performance(nav, benchmark_return=benchmark_for_perf)
     exposure = industry_exposure(portfolio, processed[["trade_date", "ts_code", "industry_code"]])
-    attribution = _save_attribution(out, portfolio, processed, market_df, trades, nav)
+    benchmark_exposure = _benchmark_industry_exposure(
+        portfolio["trade_date"], data.get("index_member"), data["industry"], index_code
+    )
+    if not benchmark_exposure.empty:
+        active_exposure = active_industry_exposure(exposure, benchmark_exposure)
+    else:
+        active_exposure = pd.DataFrame(columns=["trade_date", "industry_code", "target_weight", "benchmark_weight", "active_weight"])
+    active_exposure.to_csv(out / "active_industry_exposure.csv", index=False)
+    attribution = _save_attribution(out, portfolio, processed, market_df, trades, nav, config_bundle.cost)
     cost_summary = attribution["cost_summary"]
+    unfilled_summary = summarize_unfilled_orders(backtest.orders)
+    unfilled_summary.to_csv(out / "unfilled_order_analysis.csv", index=False)
+    scenario_summary = pd.DataFrame()
+    if robustness:
+        robust = config_bundle.backtest.get("robustness", {})
+        cost_multipliers = tuple((str(key), float(value)) for key, value in robust.get("cost_multipliers", {}).items())
+        scenario_summary, _ = run_execution_scenarios(
+            portfolio,
+            market_df,
+            config_bundle.cost,
+            delays=tuple(int(value) for value in robust.get("execution_delay_days", [1, 2, 3])),
+            participation_rates=tuple(float(value) for value in robust.get("participation_rates", [0.01, 0.05, 0.10])),
+            cost_multipliers=cost_multipliers,
+            min_trade_amount=execution.get("min_trade_amount"),
+            max_turnover=execution.get("max_turnover", 0.5),
+        )
+        scenario_summary.to_csv(out / "robustness_scenarios.csv", index=False)
 
     save_report_artifacts(
         out,
@@ -426,6 +587,7 @@ def _run_pipeline_core(
         benchmark_return=benchmark_for_perf,
     )
     diagnostics = _save_diagnostics(out, processed, factor_cols, factor_specs, return_col, ic_table, corr)
+    save_research_extension_charts(out, diagnostics["factor_decay"], scenario_summary)
     group_returns.to_csv(out / "group_returns.csv")
     corr.to_csv(out / "factor_corr.csv")
     raw_coverage["by_date"].to_csv(out / "factor_coverage_by_date.csv", index=False)
@@ -433,6 +595,11 @@ def _run_pipeline_core(
     raw_coverage["by_size_bucket"].to_csv(out / "factor_coverage_by_size_bucket.csv", index=False)
     raw_coverage["missing_streaks"].to_csv(out / "factor_missing_streaks.csv", index=False)
     processing_audit.to_csv(out / "factor_processing_audit.csv", index=False)
+    timing_cols = [
+        col for col in ["trade_date", "signal_date", "execution_date", "target_return_end_date", "ts_code",
+                        "financial_report_period", "financial_ann_date", "financial_usable_date"] if col in processed
+    ]
+    processed[timing_cols].to_csv(out / "factor_panel_timing.csv", index=False)
     nav.to_csv(out / "sample_nav.csv", index=False)
     trades.to_csv(out / "sample_trades.csv", index=False)
     backtest.orders.to_csv(out / "sample_orders.csv", index=False)
@@ -450,6 +617,7 @@ def _run_pipeline_core(
         "group_returns": group_returns,
         "portfolio": portfolio,
         "industry_exposure": exposure,
+        "active_industry_exposure": active_exposure,
         "nav": nav,
         "trades": trades,
         "orders": backtest.orders,
@@ -459,4 +627,83 @@ def _run_pipeline_core(
         "quality_issues": quality_issues,
         "diagnostics": diagnostics,
         "attribution": attribution,
+        "walk_forward": walk_forward,
+        "unfilled_summary": unfilled_summary,
+        "robustness_summary": scenario_summary,
     }
+
+
+def _write_run_summary(
+    run_dir: Path,
+    result: dict[str, object],
+    bundle: ConfigBundle,
+    mode: str,
+    run_id: str,
+) -> None:
+    project = bundle.project.get("project", {})
+    research = bundle.project.get("research", {})
+    portfolio = bundle.backtest.get("portfolio", {})
+    cost = bundle.backtest.get("cost", {})
+    factor_panel = result.get("factor_panel")
+    if isinstance(factor_panel, pd.DataFrame) and not factor_panel.empty:
+        actual_start = pd.to_datetime(factor_panel["trade_date"]).min().date()
+        actual_end = pd.to_datetime(factor_panel["trade_date"]).max().date()
+    else:
+        actual_start = actual_end = "unknown"
+    lines = [
+        "# Run Summary", "", f"- run_id: {run_id}", f"- package_version: {__version__}", f"- mode: {mode}",
+        f"- data interpretation: {'synthetic engineering validation' if mode == 'sample' else 'standardized real-data research'}",
+        f"- benchmark: {project.get('benchmark')}", f"- configured range: {research.get('start_date')} to {research.get('end_date')}",
+        f"- actual factor-panel range: {actual_start} to {actual_end}",
+        f"- universe: {bundle.project.get('universe', {}).get('index_code')}",
+        f"- rebalance: {portfolio.get('rebalance_frequency')}", f"- top_n: {portfolio.get('top_n')}",
+        f"- max_weight: {portfolio.get('max_weight')}", f"- cost assumptions: {cost}",
+        "- execution: next-open with suspension, price-limit, lot-size, turnover and participation constraints.",
+        "- unresolved biases: provider coverage, historical PIT correctness, delisting completeness, and market-impact calibration require source-specific verification.",
+        "- LLM role: auxiliary explanation and weak-signal research only; not investment advice.", "",
+    ]
+    (run_dir / "run_summary.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_run_metadata(
+    run_dir: Path,
+    result: dict[str, object],
+    bundle: ConfigBundle,
+    mode: str,
+    run_id: str,
+    manifest: dict[str, object],
+) -> None:
+    manifest_text = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+    metadata = {
+        "run_id": run_id,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "package_version": __version__,
+        "git_commit": _git_commit(),
+        "mode": mode,
+        "data_version": hashlib.sha256(manifest_text.encode("utf-8")).hexdigest(),
+        "config_paths": {key: str(path) for key, path in bundle.paths.items()},
+        "universe": bundle.project.get("universe", {}),
+        "research": bundle.project.get("research", {}),
+        "portfolio": bundle.backtest.get("portfolio", {}),
+        "cost": bundle.backtest.get("cost", {}),
+        "execution": bundle.backtest.get("execution", {}),
+        "factors": list(result.get("factor_cols", [])),
+    }
+    (run_dir / "run_metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+
+
+def _git_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return completed.stdout.strip() if completed.returncode == 0 else "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"

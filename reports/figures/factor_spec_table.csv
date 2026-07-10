@@ -1,0 +1,32 @@
+factor,category,direction,window,input_columns,requires_pit,neutralize,description
+event_sentiment_20,event,1,20.0,news_event,True,none,20-day event sentiment signal.
+roe,quality,1,,roe,True,industry_size,Return on equity.
+roa,quality,1,,roa,True,industry_size,Return on assets.
+gross_margin,quality,1,,gross_margin,True,industry_size,Gross margin.
+gross_margin_stability,quality,1,4.0,gross_margin,True,industry_size,Negative rolling gross-margin volatility.
+debt_ratio,quality,-1,,debt_ratio,True,industry_size,Debt ratio.
+asset_turnover,quality,1,,"operating_revenue,total_assets",True,industry_size,Operating revenue to total assets.
+vol_20,risk,-1,20.0,return_1d,False,industry_size,20-day realized volatility.
+vol_60,risk,-1,60.0,return_1d,False,industry_size,60-day realized volatility.
+beta_60,risk,-1,60.0,return_1d,False,industry_size,60-day beta to the cross-sectional market proxy.
+idio_vol_60,risk,-1,60.0,return_1d,False,industry_size,60-day idiosyncratic volatility versus the market proxy.
+turnover_20,price_volume,-1,20.0,turnover_rate,False,industry_size,20-day average turnover.
+amihud_20,risk,-1,20.0,"return_1d,amount",False,industry_size,20-day Amihud illiquidity.
+mf_5,money_flow,1,5.0,"net_mf_amount,amount",False,industry_size,5-day net money-flow ratio.
+mf_20,money_flow,1,20.0,"net_mf_amount,amount",False,industry_size,20-day net money-flow ratio.
+large_order_mf_20,money_flow,1,20.0,"large_order_net_mf_amount,amount",False,industry_size,20-day large-order money-flow ratio.
+revenue_yoy,growth,1,,revenue_yoy,True,industry_size,Revenue year-over-year growth.
+profit_yoy,growth,1,,profit_yoy,True,industry_size,Profit year-over-year growth.
+roe_delta,growth,1,1.0,roe,True,industry_size,ROE change versus prior report.
+size,fundamental,-1,,total_mv,False,industry,Log market capitalization.
+bp,fundamental,1,,pb,False,industry_size,Book-to-price ratio.
+ep,fundamental,1,,pe_ttm,False,industry_size,Earnings-to-price ratio.
+sp,fundamental,1,,ps,False,industry_size,Sales-to-price ratio.
+cfp,fundamental,1,,"operating_cash_flow,total_mv",True,industry_size,Operating cash flow to market capitalization.
+mom_20,price_volume,1,20.0,adj_close,False,industry_size,20-day adjusted-price momentum.
+mom_60_skip5,price_volume,1,60.0,adj_close,False,industry_size,60-day momentum skipping the most recent 5 trading days.
+mom_120,price_volume,1,120.0,adj_close,False,industry_size,120-day adjusted-price momentum.
+rev_5,price_volume,1,5.0,adj_close,False,industry_size,Short-term 5-day reversal.
+rev_20,price_volume,1,20.0,adj_close,False,industry_size,20-day reversal.
+turnover_chg_20,price_volume,1,20.0,turnover_rate,False,industry_size,20-day turnover change versus previous 20-day average.
+amount_mom_20,price_volume,1,20.0,amount,False,industry_size,20-day traded-amount momentum.

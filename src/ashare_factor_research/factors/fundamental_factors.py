@@ -18,6 +18,7 @@ def align_financial_to_dates(
     )
     rows = []
     fin = financial_indicator.sort_values(["ts_code", "usable_date"]).copy()
+    fin["financial_usable_date"] = pd.to_datetime(fin["usable_date"])
     if "roe_delta" not in fin:
         fin["roe_delta"] = fin.groupby("ts_code")["roe"].diff()
     if "gross_margin_stability" not in fin:
@@ -52,6 +53,9 @@ def compute_fundamental_factors(
 
     aligned_fin = align_financial_to_dates(trade_dates, financial_indicator)
     optional_fin_cols = [
+        "report_period",
+        "ann_date",
+        "financial_usable_date",
         "roe",
         "gross_margin",
         "debt_ratio",
@@ -65,6 +69,12 @@ def compute_fundamental_factors(
     ]
     keep = ["trade_date", "ts_code"] + [col for col in optional_fin_cols if col in aligned_fin]
     merged = basic.merge(aligned_fin[keep], on=["trade_date", "ts_code"], how="left")
+    merged = merged.rename(
+        columns={
+            "report_period": "financial_report_period",
+            "ann_date": "financial_ann_date",
+        }
+    )
     merged["cfp"] = (
         safe_divide(merged["operating_cash_flow"], merged["total_mv"])
         if "operating_cash_flow" in merged
@@ -91,5 +101,8 @@ def compute_fundamental_factors(
             "revenue_yoy",
             "profit_yoy",
             "roe_delta",
+            "financial_report_period",
+            "financial_ann_date",
+            "financial_usable_date",
         ]
     ]

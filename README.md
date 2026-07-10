@@ -4,7 +4,7 @@
 
 `数据清洗 -> 因子构建 -> 因子处理 -> IC/分组检验 -> 多因子组合 -> 回测绩效 -> LLM 事件解释`
 
-第一版重点是项目框架和最小可运行样例，不直接给出真实可交易结论。样例数据由脚本合成，真实数据接入默认预留 AkShare provider。
+当前版本重点是可审计研究工程，不直接给出真实可交易结论。样例数据由脚本合成；真实模式要求标准表、数据 manifest、PIT 质量阻断和严格基准日期对齐。
 
 ## 快速开始
 
@@ -14,6 +14,7 @@ python scripts/generate_sample_data.py
 $env:PYTHONPATH="src"
 python -m ashare_factor_research.main run-sample
 python -m ashare_factor_research.main run-pipeline --mode sample --data-dir data/sample --run-id sample-smoke
+python -m ashare_factor_research.main version
 python -m unittest discover -s tests
 python -m compileall src tests
 python scripts/smoke_notebooks.py
@@ -26,7 +27,7 @@ python scripts/build_report_pdf.py
 & "C:\Users\25377\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" scripts/generate_sample_data.py
 ```
 
-## 阶段 0-5 主线入口
+## 阶段 1-8 主线入口
 
 本目录是唯一主线交付目录。根目录下其他 `A-LLM-*` 目录仅作为历史参考或能力来源，不再并行演进。
 
@@ -34,6 +35,12 @@ python scripts/build_report_pdf.py
 
 ```text
 真实数据拉取/标准化 -> 数据质量阻断 -> PIT 因子面板 -> 因子检验 -> 多因子组合回测 -> 真实基准绩效与归因报告
+```
+
+外部文件标准化并生成 `data_manifest.json`：
+
+```powershell
+python -m ashare_factor_research.main import-data --source-dir data/import/incoming --output-dir data/standard/real-v1 --format parquet
 ```
 
 真实数据依赖：
@@ -65,9 +72,12 @@ python -m ashare_factor_research.main quality-check --mode real --data-dir data/
 
 ```powershell
 python -m ashare_factor_research.main run-pipeline --mode sample --data-dir data/sample --output-dir outputs/runs --run-id sample-smoke
+python -m ashare_factor_research.main run-robustness --mode sample --data-dir data/sample --output-dir outputs/runs --run-id robustness-smoke
 ```
 
-关键输出包括 `config_snapshot.yaml`、`data_manifest.json`、`data_quality_report.md`、`metrics.csv`、`orders.csv`、`fills.csv`、`positions.csv` 和 `figures/`。
+关键输出包括三份配置快照、`data_manifest.json`、`run_summary.md`、样本外方向/权重历史、订单/成交/持仓、未成交分析、归因和 `figures/`。
+
+统一质量门禁：`python -m ashare_factor_research.main quality`。
 
 ## 项目结构
 
@@ -107,8 +117,8 @@ tests/                          单元测试与 smoke test
 - 因子 IC 使用未来 20 个交易日收益作为默认目标。
 - 财务/新闻类数据必须按公告日或发布时间做 point-in-time 过滤。
 - 回测结果仅代表研究框架验证，不代表真实可获得收益。
-- `reports/figures/excess_return.png` 当前以现金零收益作为占位基准；接入真实指数后应替换为匹配股票池的基准收益。
-- 标准 `run-pipeline` 在存在 `benchmark_index` 时会使用严格日期对齐的真实基准收益；日期不匹配时不会隐式 forward-fill。
+- 合成样例中的基准仅用于验证严格对齐和相对指标计算，不代表真实指数表现。
+- 标准 `run-pipeline` 仅在 `benchmark_index` 与策略日期严格匹配时计算 Alpha、IR 等相对指标，不做隐式 forward-fill。
 
 ## 当前实现范围
 
@@ -118,20 +128,13 @@ tests/                          单元测试与 smoke test
 - 量价、估值、规模、质量、资金流、LLM 事件因子示例。
 - MAD 去极值、截面 z-score、行业/市值中性化。
 - IC、Rank IC、分组收益、因子相关性。
-- TopN 等权组合、基础成本模型、下一交易日执行回测。
+- 配置驱动的 Top50/5% 上限组合、训练/验证/测试滚动方向与权重、下一交易日执行回测。
+- 成本/延迟/成交额参与率压力测试，未成交原因、行业主动暴露和回撤贡献。
+- 默认离线的 LLM 事件标签、缓存、prompt/model 版本和人工抽查门槛。
 - 年化收益、波动率、夏普、Calmar、最大回撤、信息比率、换手率。
 - `unittest` 测试和最小流水线 smoke test。
 - 7 个顺序 Notebook、核心 PNG 图表、研究报告 Markdown、PDF 生成脚本和面试说明。
 
 未实现和可改进项见 [reports/implementation_status.md](reports/implementation_status.md)。
 
-## GitHub 推送
-
-本实现默认不自动提交或推送。由于当前环境 Git HTTPS 访问曾出现 TLS/凭据错误，本地目录是用 GitHub API 保留远端文件后初始化的工作树。凭据正常后，建议先接上远端历史，再提交：
-
-```powershell
-git pull origin main
-git add .
-git commit -m "Implement A-share multi-factor research framework"
-git push -u origin main
-```
+完整阶段验收矩阵见 [docs/improvement_plan_implementation.md](docs/improvement_plan_implementation.md)。

@@ -10,12 +10,30 @@ from ashare_factor_research.utils.helpers import require_columns
 def industry_exposure(weights: pd.DataFrame, industry: pd.DataFrame) -> pd.DataFrame:
     if weights.empty:
         return pd.DataFrame(columns=["trade_date", "industry_code", "target_weight"])
-    merged = weights.merge(industry, on=["trade_date", "ts_code"], how="left")
+    if "industry_code" in weights:
+        merged = weights.copy()
+    else:
+        merged = weights.merge(industry, on=["trade_date", "ts_code"], how="left")
     return (
         merged.groupby(["trade_date", "industry_code"], as_index=False)["target_weight"]
         .sum()
         .sort_values(["trade_date", "industry_code"])
     )
+
+
+def active_industry_exposure(
+    portfolio_exposure: pd.DataFrame,
+    benchmark_exposure: pd.DataFrame,
+) -> pd.DataFrame:
+    require_columns(portfolio_exposure, ["trade_date", "industry_code", "target_weight"], "portfolio_exposure")
+    require_columns(benchmark_exposure, ["trade_date", "industry_code", "benchmark_weight"], "benchmark_exposure")
+    merged = portfolio_exposure.merge(
+        benchmark_exposure,
+        on=["trade_date", "industry_code"],
+        how="outer",
+    ).fillna({"target_weight": 0.0, "benchmark_weight": 0.0})
+    merged["active_weight"] = merged["target_weight"] - merged["benchmark_weight"]
+    return merged.sort_values(["trade_date", "industry_code"]).reset_index(drop=True)
 
 
 def security_return_contribution(

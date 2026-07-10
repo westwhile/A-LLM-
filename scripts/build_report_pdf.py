@@ -7,7 +7,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer
 
 
@@ -16,20 +16,27 @@ REPORT_MD = ROOT / "reports" / "factor_research_report.md"
 REPORT_PDF = ROOT / "reports" / "factor_research_report.pdf"
 
 
-def _register_font() -> str:
-    font_name = "STSong-Light"
-    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
-    return font_name
+def _register_fonts() -> tuple[str, str]:
+    candidates = [
+        (Path("C:/Windows/Fonts/Deng.ttf"), Path("C:/Windows/Fonts/Dengb.ttf")),
+        (Path("C:/Windows/Fonts/simhei.ttf"), Path("C:/Windows/Fonts/simhei.ttf")),
+    ]
+    for regular_path, bold_path in candidates:
+        if regular_path.exists() and bold_path.exists():
+            pdfmetrics.registerFont(TTFont("AshareReport", str(regular_path)))
+            pdfmetrics.registerFont(TTFont("AshareReportBold", str(bold_path)))
+            return "AshareReport", "AshareReportBold"
+    raise RuntimeError("No embeddable Chinese font found. Expected Deng.ttf or simhei.ttf in C:/Windows/Fonts.")
 
 
-def _styles(font_name: str) -> dict[str, ParagraphStyle]:
+def _styles(font_name: str, bold_font_name: str) -> dict[str, ParagraphStyle]:
     base = getSampleStyleSheet()
     return {
-        "title": ParagraphStyle("title", parent=base["Title"], fontName=font_name, fontSize=20, leading=26, spaceAfter=18),
+        "title": ParagraphStyle("title", parent=base["Title"], fontName=bold_font_name, fontSize=20, leading=26, spaceAfter=18),
         "h2": ParagraphStyle(
             "h2",
             parent=base["Heading2"],
-            fontName=font_name,
+            fontName=bold_font_name,
             fontSize=14,
             leading=20,
             spaceBefore=12,
@@ -61,7 +68,8 @@ def _markdown_image(line: str) -> Path | None:
 
 
 def build_pdf() -> Path:
-    styles = _styles(_register_font())
+    body_font, bold_font = _register_fonts()
+    styles = _styles(body_font, bold_font)
     story = []
     for raw_line in REPORT_MD.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -89,7 +97,15 @@ def build_pdf() -> Path:
         topMargin=1.7 * cm,
         bottomMargin=1.7 * cm,
     )
-    doc.build(story)
+    def _decorate_page(canvas, document) -> None:
+        canvas.saveState()
+        canvas.setFont(body_font, 8)
+        canvas.setFillColor(colors.HexColor("#666666"))
+        canvas.drawString(1.8 * cm, 0.9 * cm, "A-share multi-factor research framework")
+        canvas.drawRightString(A4[0] - 1.8 * cm, 0.9 * cm, f"Page {document.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_decorate_page, onLaterPages=_decorate_page)
     return REPORT_PDF
 
 

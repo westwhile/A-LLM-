@@ -3,6 +3,8 @@ portfolio:
   max_weight: 0.05
   min_holding_count: 30
   rebalance_frequency: month_end
+  max_industry_weight: 0.30
+  max_cash_weight: 0.10
 
 cost:
   commission_buy: 0.0003
@@ -15,3 +17,15 @@ execution:
   signal_price: close
   execution_price: next_open
   fallback_execution_price: next_close_return_proxy
+  lot_size: 100
+  max_turnover: 0.50
+  min_trade_amount: null
+  max_participation_rate: 0.05
+
+robustness:
+  execution_delay_days: [1, 2, 3]
+  participation_rates: [0.01, 0.05, 0.10]
+  cost_multipliers:
+    zero: 0.0
+    standard: 1.0
+    high: 2.0
