@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ashare-factor-research"
 version = "0.2.0"
-description = "A-share multi-factor research framework with sample pipeline and LLM event factor stubs."
+description = "Auditable A-share multi-factor research framework with PIT controls, walk-forward validation, execution-aware backtesting, and LLM event auditing."
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",

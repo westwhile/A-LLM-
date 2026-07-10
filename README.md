@@ -1,58 +1,100 @@
-# A股多因子选股策略研究：因子检验、组合回测与 LLM 辅助解释
+# A 股多因子研究框架
 
-本项目用于展示一套可复现的 A 股多因子研究框架，覆盖：
+一个面向研究复现、时间一致性审计和执行可行性评估的 A 股多因子选股工程。项目覆盖标准数据接入、Point-in-Time（PIT）因子构建、样本外因子验证、组合约束、事件驱动回测、绩效归因、稳健性检验，以及可审计的 LLM 事件标签流程。
 
-`数据清洗 -> 因子构建 -> 因子处理 -> IC/分组检验 -> 多因子组合 -> 回测绩效 -> LLM 事件解释`
+> 本项目是量化研究与工程验证框架。仓库中的样例结果基于合成数据，不代表真实可获得收益，不构成投资建议或交易依据。
 
-当前版本重点是可审计研究工程，不直接给出真实可交易结论。样例数据由脚本合成；真实模式要求标准表、数据 manifest、PIT 质量阻断和严格基准日期对齐。
+## 核心能力
+
+| 研究环节 | 已实现能力 | 主要审计产物 |
+|---|---|---|
+| 数据工程 | 12 张标准表、CSV/Parquet 导入、字段映射、日期规范化、主键与跨表质量检查 | `data_manifest.json`、数据质量报告 |
+| 时间一致性 | 信号日、执行日、目标收益结束日分离；财务公告日与可用日追踪；历史股票池过滤 | `factor_panel_timing.csv`、PIT 测试 |
+| 因子研究 | 量价、风险、估值、质量、成长、资金流和事件因子；去极值、标准化与中性化 | IC、Rank IC、分组收益、覆盖率、衰减和相关性 |
+| 样本外验证 | 滚动训练/验证/测试窗口，历史方向锁定、因子筛选和 IC 权重 | 方向、权重、窗口 IC、样本外 IC 和异常标记 |
+| 组合与回测 | TopN、单票与行业上限、最小持仓数、下一交易日开盘执行、订单/成交/持仓审计 | `orders.csv`、`fills.csv`、`positions.csv` |
+| 交易约束 | 停牌、涨跌停、ST/板块规则、手数、换手、最小成交额和成交额参与率 | 未成交原因及未成交金额分析 |
+| 稳健性检验 | 零/标准/高成本，延迟 1/2/3 日，成交额参与率 1%/5%/10% | `robustness_scenarios.csv`、情景图表 |
+| 绩效与归因 | 收益、波动、Sharpe、Sortino、Calmar、回撤、相对基准指标和多维贡献分析 | 主动行业暴露、个股/行业/市值/回撤/成本归因 |
+| LLM 事件研究 | 默认离线标签器、Prompt/模型版本、JSONL 缓存、原文留痕和人工抽查门槛 | LLM 标签审计 CSV 与 Markdown 报告 |
+
+## 研究流程
+
+```text
+数据拉取或本地导入
+        ↓
+标准化与数据版本登记
+        ↓
+质量阻断与 PIT 检查
+        ↓
+因子构建、处理与覆盖率审计
+        ↓
+滚动训练 / 验证 / 样本外评分
+        ↓
+受约束组合构建与事件驱动回测
+        ↓
+绩效、风险、成本与容量归因
+        ↓
+可复现的 run 目录、图表和研究报告
+```
 
 ## 快速开始
 
+### 1. 环境要求
+
+- Python 3.10 或更高版本。
+- Windows PowerShell、macOS 或 Linux shell。
+- 真实数据导入建议安装 `pyarrow`；AkShare 拉取需要安装 `akshare`。
+
+推荐使用虚拟环境并安装项目依赖：
+
 ```powershell
-cd A-LLM-
-python scripts/generate_sample_data.py
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[data,research,test]"
+```
+
+如不进行 editable install，可在源码目录运行前设置：
+
+```powershell
 $env:PYTHONPATH="src"
-python -m ashare_factor_research.main run-sample
-python -m ashare_factor_research.main run-pipeline --mode sample --data-dir data/sample --run-id sample-smoke
+```
+
+### 2. 运行合成样例
+
+```powershell
+python -m ashare_factor_research.main generate-sample --output-dir data/sample
+python -m ashare_factor_research.main run-pipeline `
+  --mode sample `
+  --data-dir data/sample `
+  --output-dir outputs/runs `
+  --run-id sample-smoke
+```
+
+运行成本、延迟和容量压力测试：
+
+```powershell
+python -m ashare_factor_research.main run-robustness `
+  --mode sample `
+  --data-dir data/sample `
+  --output-dir outputs/runs `
+  --run-id robustness-smoke
+```
+
+查看版本、运行环境和配置路径：
+
+```powershell
 python -m ashare_factor_research.main version
-python -m unittest discover -s tests
-python -m compileall src tests
-python scripts/smoke_notebooks.py
-python scripts/build_report_pdf.py
 ```
 
-如果本机 `python` 不可用，可使用 Codex bundled Python：
+## 真实数据工作流
+
+真实模式不会把合成样例通过视为数据有效性证明。进入研究 pipeline 前，数据目录必须包含 `data_manifest.json`，并通过阻断级质量检查。
+
+### 1. 拉取 AkShare 稳定端点
 
 ```powershell
-& "C:\Users\25377\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" scripts/generate_sample_data.py
-```
-
-## 阶段 1-8 主线入口
-
-本目录是唯一主线交付目录。根目录下其他 `A-LLM-*` 目录仅作为历史参考或能力来源，不再并行演进。
-
-标准链路：
-
-```text
-真实数据拉取/标准化 -> 数据质量阻断 -> PIT 因子面板 -> 因子检验 -> 多因子组合回测 -> 真实基准绩效与归因报告
-```
-
-外部文件标准化并生成 `data_manifest.json`：
-
-```powershell
-python -m ashare_factor_research.main import-data --source-dir data/import/incoming --output-dir data/standard/real-v1 --format parquet
-```
-
-真实数据依赖：
-
-```powershell
-python -m pip install akshare pyarrow
-```
-
-小股票池真实数据拉取示例：
-
-```powershell
-$env:PYTHONPATH="src"
 python -m ashare_factor_research.main fetch-data `
   --start-date 2024-01-01 `
   --end-date 2024-03-31 `
@@ -62,45 +104,133 @@ python -m ashare_factor_research.main fetch-data `
   --format csv
 ```
 
-AkShare 无法稳定提供的历史 PIT 表，例如历史指数成分、ST、停牌、行业、完整估值和财务表，应以本项目标准表格式补齐到本地目录。真实模式会把缺失核心表记为阻断问题：
+### 2. 补齐并标准化 PIT 表
+
+历史估值、财务、指数成分、行业、ST、停复牌、涨跌停和事件数据应由可靠的本地数据源补齐，再统一导入：
 
 ```powershell
-python -m ashare_factor_research.main quality-check --mode real --data-dir data/raw/smoke --output-dir outputs/quality --fail-on-blocking
+python -m ashare_factor_research.main import-data `
+  --source-dir data/import/incoming `
+  --output-dir data/standard/real-v1 `
+  --format parquet
 ```
 
-完整阶段输出使用 `outputs/runs/<run_id>/`：
+可通过 `--mapping <yaml>` 提供分表字段映射。导入过程会转换日期、验证 schema 与主键、写入标准表，并登记源文件 SHA-256、字段类型、行数和日期范围。
+
+### 3. 执行质量阻断
 
 ```powershell
-python -m ashare_factor_research.main run-pipeline --mode sample --data-dir data/sample --output-dir outputs/runs --run-id sample-smoke
-python -m ashare_factor_research.main run-robustness --mode sample --data-dir data/sample --output-dir outputs/runs --run-id robustness-smoke
+python -m ashare_factor_research.main quality-check `
+  --mode real `
+  --data-dir data/standard/real-v1 `
+  --output-dir outputs/quality/real-v1 `
+  --fail-on-blocking
 ```
 
-关键输出包括三份配置快照、`data_manifest.json`、`run_summary.md`、样本外方向/权重历史、订单/成交/持仓、未成交分析、归因和 `figures/`。
+### 4. 运行真实研究
 
-统一质量门禁：`python -m ashare_factor_research.main quality`。
+```powershell
+python -m ashare_factor_research.main run-pipeline `
+  --mode real `
+  --data-dir data/standard/real-v1 `
+  --output-dir outputs/runs `
+  --run-id real-v1
+```
+
+真实模式会对缺表、重复主键、PIT 错误、价格异常、跨表日期不一致、基准覆盖不足和无法形成样本外评分等问题执行阻断。
+
+## 配置体系
+
+| 配置文件 | 职责 |
+|---|---|
+| `config/project_config.yaml` | 市场、基准、研究区间、股票池、信号/执行时点、walk-forward 和 LLM 审计规则 |
+| `config/factor_config.yaml` | 启用因子、处理参数、覆盖率阈值和中性化设置 |
+| `config/backtest_config.yaml` | TopN、权重与行业约束、交易成本、执行限制和稳健性情景 |
+
+CLI 参数可覆盖关键组合参数，但每次标准运行都会保存三份完整配置快照，便于复现和审计。
+
+## 输出契约
+
+每次运行写入独立目录 `outputs/runs/<run_id>/`：
+
+```text
+outputs/runs/<run_id>/
+├── project_config_snapshot.yaml
+├── factor_config_snapshot.yaml
+├── backtest_config_snapshot.yaml
+├── data_manifest.json
+├── run_metadata.json
+├── run_summary.md
+├── data_quality_report.md
+├── metrics.csv
+├── orders.csv
+├── fills.csv
+├── positions.csv
+└── figures/
+    ├── walk_forward_*.csv
+    ├── factor_panel_timing.csv
+    ├── robustness_scenarios.csv
+    ├── unfilled_order_analysis.csv
+    ├── active_industry_exposure.csv
+    ├── drawdown_contribution.csv
+    └── 其他因子、绩效与归因图表
+```
+
+`run_metadata.json` 记录 run_id、包版本、Git 提交、数据版本哈希、股票池、因子列表、成本和执行假设。
+
+## 关键研究假设
+
+- 因子在信号日收盘后生成，不允许使用当日收盘信号在同一收盘价成交。
+- 默认在下一交易日开盘尝试执行；稳健性模块可额外延迟 1 至 3 个交易日。
+- 财务数据仅在 `usable_date` 到达后可见，并保留报告期、公告日和可用日来源字段。
+- 历史指数成分、行业、ST、停牌、涨跌停和退市状态必须按当时可见信息处理。
+- 训练和验证标签必须在对应窗口边界前完整实现，避免未来收益跨窗泄漏。
+- 基准收益必须与策略日期严格对齐，不进行隐式前向填充。
+- Q5-Q1 等多空结果是因子诊断，不等同于 A 股市场中的可交易做空收益。
+- 回测成本、滑点和冲击参数属于研究假设，不能替代真实成交验证。
+
+## 工程质量
+
+统一质量门禁包含源码编译、单元测试、CLI smoke 和 Notebook smoke：
+
+```powershell
+python -m ashare_factor_research.main quality
+```
+
+也可以分别执行：
+
+```powershell
+python -m compileall src tests
+python -m unittest discover -s tests
+python scripts/smoke_notebooks.py
+python -m ashare_factor_research.main build-report
+```
 
 ## 项目结构
 
 ```text
-config/                         参数配置
-data/sample/                    合成样例数据，可提交
-docs/                           面试说明与补充文档
-notebooks/                      可顺序运行的研究 notebook
-reports/                        报告、图表、指标与实现状态说明
-scripts/                        命令行辅助脚本
+config/                         研究、因子和回测配置
+data/sample/                    可提交的合成样例数据
+docs/                           数据字典、实施矩阵和补充说明
+notebooks/                      按研究流程排列的 7 个 Notebook
+reports/                        Markdown/PDF 报告和可复核样例产物
+scripts/                        样例生成、质量检查和报告脚本
 src/ashare_factor_research/     核心 Python 包
-tests/                          单元测试与 smoke test
+tests/                          单元测试与端到端 smoke test
 ```
 
-## 报告与展示入口
+`A-LLM-` 是唯一主线交付目录；工作区其他 `A-LLM-*` 目录仅用于历史追溯，不应加入 `PYTHONPATH`。详见 [历史目录说明](docs/historical_directories.md)。
 
-- 完整研究报告：[reports/factor_research_report.md](reports/factor_research_report.md)
-- PDF 报告：运行 `python scripts/build_report_pdf.py` 生成 [reports/factor_research_report.pdf](reports/factor_research_report.pdf)
-- Notebook 顺序复现：[notebooks/README.md](notebooks/README.md)
-- 面试问题准备：[docs/interview_notes.md](docs/interview_notes.md)
-- 标准数据字典：[docs/data_dictionary.md](docs/data_dictionary.md)
+## 报告与文档
 
-核心样例图表：
+- [研究报告（Markdown）](reports/factor_research_report.md)
+- [研究报告（PDF）](reports/factor_research_report.pdf)
+- [当前实现状态](reports/implementation_status.md)
+- [改进计划实施矩阵](docs/improvement_plan_implementation.md)
+- [标准数据字典](docs/data_dictionary.md)
+- [Notebook 复现顺序](notebooks/README.md)
+
+核心合成样例图表：
 
 ![累计净值](reports/figures/cumulative_return.png)
 
@@ -108,33 +238,12 @@ tests/                          单元测试与 smoke test
 
 ![因子相关性](reports/figures/factor_corr_heatmap.png)
 
-最近一次样例运行的核心指标见 [reports/figures/performance_metrics.csv](reports/figures/performance_metrics.csv)。当前样例数据为合成数据，指标只用于验证工程流程和展示报告结构，不代表真实可交易收益。
+## 局限与风险披露
 
-## 关键时间假设
+- 合成样例只能验证工程链路，不能证明因子在真实市场中有效。
+- AkShare 仅用于经过保守映射的端点；历史 PIT 数据仍需独立核验来源、修订口径和覆盖完整性。
+- 当前执行模型无法完整模拟集合竞价、排队成交、盘口深度、复牌首日和极端市场冲击。
+- 多次查看样本外结果并据此反复调参，仍会造成隐性样本外污染。
+- LLM 模块仅用于事件结构化和辅助解释；未通过人工抽查门槛的标签不会进入组合信号。
 
-- 因子在信号日 `trade_date` 收盘后计算。
-- 组合在下一交易日生效，避免同日收盘信号同日成交。
-- 因子 IC 使用未来 20 个交易日收益作为默认目标。
-- 财务/新闻类数据必须按公告日或发布时间做 point-in-time 过滤。
-- 回测结果仅代表研究框架验证，不代表真实可获得收益。
-- 合成样例中的基准仅用于验证严格对齐和相对指标计算，不代表真实指数表现。
-- 标准 `run-pipeline` 仅在 `benchmark_index` 与策略日期严格匹配时计算 Alpha、IR 等相对指标，不做隐式 forward-fill。
-
-## 当前实现范围
-
-已实现：
-
-- 合成 A 股截面样例数据生成与读取。
-- 量价、估值、规模、质量、资金流、LLM 事件因子示例。
-- MAD 去极值、截面 z-score、行业/市值中性化。
-- IC、Rank IC、分组收益、因子相关性。
-- 配置驱动的 Top50/5% 上限组合、训练/验证/测试滚动方向与权重、下一交易日执行回测。
-- 成本/延迟/成交额参与率压力测试，未成交原因、行业主动暴露和回撤贡献。
-- 默认离线的 LLM 事件标签、缓存、prompt/model 版本和人工抽查门槛。
-- 年化收益、波动率、夏普、Calmar、最大回撤、信息比率、换手率。
-- `unittest` 测试和最小流水线 smoke test。
-- 7 个顺序 Notebook、核心 PNG 图表、研究报告 Markdown、PDF 生成脚本和面试说明。
-
-未实现和可改进项见 [reports/implementation_status.md](reports/implementation_status.md)。
-
-完整阶段验收矩阵见 [docs/improvement_plan_implementation.md](docs/improvement_plan_implementation.md)。
+所有结果仅用于量化研究、数据工程和系统开发，不构成任何投资建议。
