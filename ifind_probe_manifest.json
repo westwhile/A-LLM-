@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "probe_id": "ifind-0a-history-quotes",
+  "created_at_utc": "2026-07-19T03:56:15+00:00",
+  "provider": "tonghuashun_ifind",
+  "transport": "http",
+  "endpoint": "https://quantapi.51ifind.com/api/v1/cmd_history_quotation",
+  "interface_or_function": "cmd_history_quotation / THS_HQ",
+  "request_scope": {
+    "codes": [
+      "300033.SZ",
+      "600030.SH"
+    ],
+    "indicators": [
+      "open",
+      "close",
+      "volume"
+    ],
+    "start_date": "2024-01-02",
+    "end_date": "2024-01-04",
+    "calendar_day_count": 3,
+    "function_parameters": {
+      "CPS": "1",
+      "Fill": "Omit",
+      "Interval": "D"
+    }
+  },
+  "request_sha256": "6f7d109401c0ae629bc17349ba69961fb163b542d8baa0a54323f00b6f7bf4ad",
+  "local_capabilities": {
+    "sdk_module_available": false,
+    "sdk_username_configured": false,
+    "sdk_password_configured": false,
+    "sdk_credentials_configured": false,
+    "http_access_token_configured": false,
+    "credential_source": "environment_only"
+  },
+  "license": {
+    "status": "unconfirmed",
+    "authorized_use_acknowledged": false
+  },
+  "execution": {
+    "dry_run": true,
+    "execute_flag": false,
+    "network_request_sent": false,
+    "http_status": null,
+    "latency_ms": null
+  },
+  "response": null,
+  "gate_status": "blocked_missing_access_token",
+  "failure_mode": "MISSING_ACCESS_TOKEN",
+  "config_path": "config/ifind_field_mapping.example.yaml",
+  "security_controls": [
+    "environment_only_credentials",
+    "fixed_official_https_endpoint",
+    "no_redirects",
+    "tls_verification_enabled",
+    "bounded_request_scope",
+    "no_raw_response_persistence"
+  ]
+}

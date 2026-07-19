@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "provider": "tonghuashun_ifind",
+  "credential_policy": {
+    "source": "environment_only",
+    "http_access_token_env": "IFIND_ACCESS_TOKEN",
+    "sdk_username_env": "IFIND_USERNAME",
+    "sdk_password_env": "IFIND_PASSWORD"
+  },
+  "probe": {
+    "transport": "http",
+    "endpoint": "https://quantapi.51ifind.com/api/v1/cmd_history_quotation",
+    "codes": ["300033.SZ", "600030.SH"],
+    "indicators": ["open", "close", "volume"],
+    "start_date": "2024-01-02",
+    "end_date": "2024-01-04",
+    "function_parameters": {"CPS": "1", "Fill": "Omit", "Interval": "D"}
+  },
+  "field_groups": {
+    "history_quotes": {
+      "enabled_for_probe": true,
+      "endpoint": "cmd_history_quotation",
+      "sdk_function": "THS_HQ",
+      "indicator_ids": {"open": "open", "close": "close", "volume": "volume"},
+      "pit_requirements": {
+        "adjustment": "unadjusted",
+        "suspended_dates": "omit_and_reconcile_with_trade_calendar"
+      }
+    },
+    "financials": {
+      "enabled_for_probe": false,
+      "endpoint": "basic_data_service_or_date_sequence",
+      "sdk_function": "THS_BD_or_THS_DS",
+      "indicator_ids": null,
+      "blocked_reason": "populate_only_from_account_visible_SuperCommand",
+      "pit_requirements": {"announcement_timestamp": "required", "revision_history": "required"}
+    },
+    "historical_membership": {
+      "enabled_for_probe": false,
+      "endpoint": "data_pool",
+      "sdk_function": "THS_DataPool_or_account_visible_report",
+      "report_id": null,
+      "blocked_reason": "populate_only_from_account_visible_SuperCommand",
+      "pit_requirements": {"historical_snapshot_semantics": "required"}
+    },
+    "announcements": {
+      "enabled_for_probe": false,
+      "endpoint": "report_query",
+      "sdk_function": "THS_ReportQuery",
+      "report_id": null,
+      "blocked_reason": "populate_only_from_account_visible_SuperCommand",
+      "pit_requirements": {
+        "publish_timestamp": "required",
+        "unique_id": "required",
+        "revision_tracking": "required"
+      }
+    }
+  }
+}
