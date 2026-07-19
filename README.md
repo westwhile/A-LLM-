@@ -58,6 +58,8 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[data,research,test]"
 ```
 
+`pyproject.toml` 声明项目的最低依赖契约；`environment.yml` 是当前受支持的 Python 3.12 严格运行环境，可使用更窄的兼容范围；`requirements.txt` 仅作为通用 pip 安装清单。三者如需调整，应在同一变更中说明差异并运行完整质量门禁。当前没有经过验证的 lock file，生成新锁文件前应先在独立环境中完成一致性检查。
+
 如不进行 editable install，可在源码目录运行前设置：
 
 ```powershell

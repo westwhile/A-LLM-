@@ -1,14 +1,15 @@
 name: ashare-factor-research
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
-  - python>=3.10
-  - numpy
-  - pandas
-  - pillow
-  - pyyaml
+  - python=3.12
   - pip
   - pip:
+      - numpy>=1.26,<2.0
+      - pandas>=2.2,<3.0
+      - Pillow>=10.0
+      - PyYAML>=6.0
       - akshare
       - pyarrow
       - pytest
