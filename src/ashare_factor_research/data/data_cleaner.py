@@ -95,15 +95,17 @@ def filter_universe(
     trade_dates: pd.DatetimeIndex | None = None,
     min_list_days: int = 120,
     min_amount_20: float | None = None,
+    exclude_st: bool = True,
+    exclude_suspended: bool = True,
 ) -> pd.DataFrame:
     """Apply point-in-time universe filters when reference tables are available."""
 
     out = daily_bar.copy()
     out["trade_date"] = pd.to_datetime(out["trade_date"])
     mask = pd.Series(True, index=out.index)
-    if "is_suspended" in out:
+    if exclude_suspended and "is_suspended" in out:
         mask &= ~out["is_suspended"].fillna(False).astype(bool)
-    if "is_st" in out:
+    if exclude_st and "is_st" in out:
         mask &= ~out["is_st"].fillna(False).astype(bool)
     if stock_basic is not None and not stock_basic.empty:
         require_columns(stock_basic, ["ts_code", "list_date", "delist_date"], "stock_basic")
@@ -134,7 +136,7 @@ def filter_universe(
             active = active_index_members(index_member, pd.Timestamp(date), index_code=index_code)
             member_mask.loc[idx] = out.loc[idx, "ts_code"].isin(active).to_numpy()
         mask &= member_mask
-    if st_status is not None and not st_status.empty:
+    if exclude_st and st_status is not None and not st_status.empty:
         require_columns(st_status, ["ts_code", "start_date", "end_date"], "st_status")
         st = st_status.copy()
         st["start_date"] = pd.to_datetime(st["start_date"])
@@ -144,7 +146,7 @@ def filter_universe(
             active = st[(st["start_date"] <= date) & (st["end_date"].isna() | (date < st["end_date"]))]
             st_mask.loc[idx] = out.loc[idx, "ts_code"].isin(set(active["ts_code"].astype(str))).to_numpy()
         mask &= ~st_mask
-    if suspension is not None and not suspension.empty:
+    if exclude_suspended and suspension is not None and not suspension.empty:
         require_columns(suspension, ["ts_code", "suspend_date", "resume_date"], "suspension")
         susp = suspension.copy()
         susp["suspend_date"] = pd.to_datetime(susp["suspend_date"])

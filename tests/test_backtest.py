@@ -211,6 +211,45 @@ class BacktestTest(unittest.TestCase):
         self.assertLessEqual(float(fill["notional"]), 10_000.0)
         self.assertEqual(result.orders.iloc[0]["reason"], "volume_participation_limit")
 
+    def test_event_backtest_minimum_commission_never_makes_cash_negative(self):
+        portfolio = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2022-01-03"]),
+                "ts_code": ["000001.SZ"],
+                "target_weight": [1.0],
+            }
+        )
+        market = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2022-01-03", "2022-01-04"]),
+                "ts_code": ["000001.SZ", "000001.SZ"],
+                "open": [10.0, 10.0],
+                "close": [10.0, 10.0],
+                "up_limit": [11.0, 11.0],
+                "down_limit": [9.0, 9.0],
+                "is_suspended": [False, False],
+            }
+        )
+        costs = CostConfig(
+            commission_buy=0.0,
+            commission_sell=0.0,
+            stamp_tax_sell=0.0,
+            slippage=0.0,
+            impact_coef=0.0,
+            min_commission=5.0,
+        )
+        result = run_event_backtest(
+            portfolio,
+            market,
+            cost_config=costs,
+            initial_cash=1_000.0,
+            lot_size=100,
+            max_turnover=None,
+        )
+        self.assertTrue(result.fills.empty)
+        self.assertGreaterEqual(float(result.nav.iloc[-1]["cash"]), 0.0)
+        self.assertEqual(result.orders.iloc[0]["reason"], "insufficient_cash")
+
     def test_max_drawdown(self):
         dd = max_drawdown(pd.Series([1.0, 1.1, 0.99, 1.2]))
         self.assertAlmostEqual(dd, -0.1)

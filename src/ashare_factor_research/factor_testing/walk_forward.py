@@ -47,6 +47,12 @@ def build_walk_forward_scores(
             train = train[train["target_return_end_date"] < validation_start]
             validation = validation[validation["target_return_end_date"] < test_date]
         if train["trade_date"].nunique() < min_train_dates:
+            anomaly_rows.append({
+                "test_date": test_date,
+                "factor": "__window__",
+                "flag": "insufficient_train_dates",
+                "value": int(train["trade_date"].nunique()),
+            })
             continue
         candidates: list[dict[str, object]] = []
         for factor in factor_cols:
@@ -90,6 +96,12 @@ def build_walk_forward_scores(
         if max_factors is not None:
             candidates = candidates[:max_factors]
         if not candidates:
+            anomaly_rows.append({
+                "test_date": test_date,
+                "factor": "__window__",
+                "flag": "no_factor_selected",
+                "value": 0,
+            })
             continue
         strength_sum = sum(float(item["strength"]) for item in candidates)
         test = data[data["trade_date"].eq(test_date)].copy()

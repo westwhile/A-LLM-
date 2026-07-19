@@ -12,6 +12,7 @@ class CostConfig:
     stamp_tax_sell: float = 0.0005
     slippage: float = 0.0005
     impact_coef: float = 0.0002
+    min_commission: float = 0.0
 
 
 def estimate_trade_cost(
@@ -21,7 +22,7 @@ def estimate_trade_cost(
 ) -> dict[str, float]:
     cfg = config or CostConfig()
     commission_rate = cfg.commission_buy if side == "buy" else cfg.commission_sell
-    commission = notional * commission_rate
+    commission = max(notional * commission_rate, cfg.min_commission) if notional > 0 else 0.0
     stamp_tax = notional * cfg.stamp_tax_sell if side == "sell" else 0.0
     slippage = notional * cfg.slippage
     impact_cost = notional * cfg.impact_coef

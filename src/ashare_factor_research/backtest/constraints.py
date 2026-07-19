@@ -19,7 +19,12 @@ def exchange_limit_rate(ts_code: str, trade_date, is_st: bool = False) -> float:
     return 0.10
 
 
-def mark_tradability(daily_bar: pd.DataFrame) -> pd.DataFrame:
+def mark_tradability(
+    daily_bar: pd.DataFrame,
+    *,
+    exclude_limit_up_for_buy: bool = True,
+    exclude_limit_down_for_sell: bool = True,
+) -> pd.DataFrame:
     """Create auditable buy/sell flags, preferring supplied PIT limit prices."""
 
     out = daily_bar.copy()
@@ -39,9 +44,9 @@ def mark_tradability(daily_bar: pd.DataFrame) -> pd.DataFrame:
             out["down_limit"] = out["prev_close"].astype(float) * (1 - rates)
     special = out.get("is_ipo_no_limit", pd.Series(False, index=out.index)).fillna(False).astype(bool)
     special |= out.get("is_relisting_no_limit", pd.Series(False, index=out.index)).fillna(False).astype(bool)
-    if {"open", "up_limit"}.issubset(out.columns):
+    if exclude_limit_up_for_buy and {"open", "up_limit"}.issubset(out.columns):
         out.loc[(out["open"] >= out["up_limit"]) & ~special, "can_buy"] = False
-    if {"open", "down_limit"}.issubset(out.columns):
+    if exclude_limit_down_for_sell and {"open", "down_limit"}.issubset(out.columns):
         out.loc[(out["open"] <= out["down_limit"]) & ~special, "can_sell"] = False
     if "is_delisting_period" in out:
         out.loc[out["is_delisting_period"].fillna(False).astype(bool), "can_buy"] = False

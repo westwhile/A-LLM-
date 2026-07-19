@@ -1,0 +1,20 @@
+mode: sample
+data_dir: ../data/sample
+output_root: ../outputs/runs
+project_config: project_config.yaml
+factor_config: factor_config.yaml
+backtest_config: backtest_config.yaml
+primary_hypothesis: "传统多因子信号在严格PIT与样本外约束下具有可复核的横截面解释力"
+candidate_factor_count: 31
+multiple_testing: benjamini_hochberg_fdr_5pct
+benchmark: "000905.SH"
+universe: "historical 000905.SH members"
+train_validation_test: "24 months / 6 months / rolling next rebalance date"
+primary_test: "monthly non-overlapping portfolio sorts and walk-forward OOS Rank IC"
+time_series_primary: "filtered Markov regimes + Kalman dynamic factor IC + GJR-GARCH risk scaling"
+time_series_fallback: "sample-only synthetic_fallback; prohibited in real mode"
+minimum_time_series_oos_months: 36
+model_selection: "net-of-cost economic gate + Diebold-Mariano audit + multiple-trial audit"
+cost_scenarios: [zero, standard, high]
+frozen_after: "before any real out-of-sample test run"
+llm_role: extension_only_until_authorized_text_timestamps_and_human_review_pass

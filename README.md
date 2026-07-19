@@ -10,13 +10,16 @@
 |---|---|---|
 | 数据工程 | 12 张标准表、CSV/Parquet 导入、字段映射、日期规范化、主键与跨表质量检查 | `data_manifest.json`、数据质量报告 |
 | 时间一致性 | 信号日、执行日、目标收益结束日分离；财务公告日与可用日追踪；历史股票池过滤 | `factor_panel_timing.csv`、PIT 测试 |
-| 因子研究 | 量价、风险、估值、质量、成长、资金流和事件因子；去极值、标准化与中性化 | IC、Rank IC、分组收益、覆盖率、衰减和相关性 |
+| 因子研究 | 量价、风险、估值、质量、成长、资金流和事件因子；去极值、标准化与中性化 | IC、HAC t、FDR、非重叠分组、覆盖率、衰减和相关性 |
 | 样本外验证 | 滚动训练/验证/测试窗口，历史方向锁定、因子筛选和 IC 权重 | 方向、权重、窗口 IC、样本外 IC 和异常标记 |
-| 组合与回测 | TopN、单票与行业上限、最小持仓数、下一交易日开盘执行、订单/成交/持仓审计 | `orders.csv`、`fills.csv`、`positions.csv` |
+| 组合与回测 | TopN、单票与行业上限、最小持仓数、下一交易日开盘执行、订单/成交/持仓审计 | `orders.csv`、`fills.csv`、`positions.csv`、`execution_compliance.csv` |
 | 交易约束 | 停牌、涨跌停、ST/板块规则、手数、换手、最小成交额和成交额参与率 | 未成交原因及未成交金额分析 |
 | 稳健性检验 | 零/标准/高成本，延迟 1/2/3 日，成交额参与率 1%/5%/10% | `robustness_scenarios.csv`、情景图表 |
+| 专业时间序列 | 平稳性/自相关/ARCH/结构突变诊断，过滤式 HMM 状态、Kalman 动态 IC、GJR-GARCH、DCC 小型因子协方差与预测基准比较 | `time_series_diagnostics.csv`、`regime_probabilities.csv`、`dynamic_factor_weights.csv`、`model_selection_audit.csv` |
 | 绩效与归因 | 收益、波动、Sharpe、Sortino、Calmar、回撤、相对基准指标和多维贡献分析 | 主动行业暴露、个股/行业/市值/回撤/成本归因 |
 | LLM 事件研究 | 默认离线标签器、Prompt/模型版本、JSONL 缓存、原文留痕和人工抽查门槛 | LLM 标签审计 CSV 与 Markdown 报告 |
+
+可部署时序模型统一通过 `PointInTimeForecaster.fit/update/forecast` 调用。接口拒绝晚于 `as_of_date` 的训练观测和不晚于训练截止日的预测目标，并统一返回训练截止日、预测目标日、模型版本、观测数和有效性门槛状态。
 
 ## 研究流程
 
@@ -61,25 +64,13 @@ python -m pip install -e ".[data,research,test]"
 $env:PYTHONPATH="src"
 ```
 
-### 2. 运行合成样例
+### 2. 唯一推荐运行入口
 
 ```powershell
-python -m ashare_factor_research.main generate-sample --output-dir data/sample
-python -m ashare_factor_research.main run-pipeline `
-  --mode sample `
-  --data-dir data/sample `
-  --output-dir outputs/runs `
+python -m ashare_factor_research.main validate-config
+python -m ashare_factor_research.main run-research `
+  --protocol config/research_protocol.yaml `
   --run-id sample-smoke
-```
-
-运行成本、延迟和容量压力测试：
-
-```powershell
-python -m ashare_factor_research.main run-robustness `
-  --mode sample `
-  --data-dir data/sample `
-  --output-dir outputs/runs `
-  --run-id robustness-smoke
 ```
 
 查看版本、运行环境和配置路径：
@@ -106,7 +97,7 @@ python -m ashare_factor_research.main fetch-data `
 
 ### 2. 补齐并标准化 PIT 表
 
-历史估值、财务、指数成分、行业、ST、停复牌、涨跌停和事件数据应由可靠的本地数据源补齐，再统一导入：
+历史估值、财务、指数成分、行业、ST、停复牌、涨跌停和事件数据应由可靠的本地数据源补齐，再统一导入。默认协议要求行情历史最晚从 2015-01-01 开始，以支持 2018 年后的 24+6 个月训练/验证及长窗口预热：
 
 ```powershell
 python -m ashare_factor_research.main import-data `
@@ -117,7 +108,7 @@ python -m ashare_factor_research.main import-data `
 
 可通过 `--mapping <yaml>` 提供分表字段映射。导入过程会转换日期、验证 schema 与主键、写入标准表，并登记源文件 SHA-256、字段类型、行数和日期范围。
 
-### 3. 执行质量阻断
+### 3. 验证数据与执行质量阻断
 
 ```powershell
 python -m ashare_factor_research.main quality-check `
@@ -125,16 +116,19 @@ python -m ashare_factor_research.main quality-check `
   --data-dir data/standard/real-v1 `
   --output-dir outputs/quality/real-v1 `
   --fail-on-blocking
+
+python -m ashare_factor_research.main verify-data `
+  --mode real `
+  --data-dir data/standard/real-v1
 ```
 
 ### 4. 运行真实研究
 
 ```powershell
-python -m ashare_factor_research.main run-pipeline `
-  --mode real `
-  --data-dir data/standard/real-v1 `
-  --output-dir outputs/runs `
-  --run-id real-v1
+python -m ashare_factor_research.main run-research `
+  --protocol config/research_protocol.real.example.yaml `
+  --run-id real-v1 `
+  --robustness
 ```
 
 真实模式会对缺表、重复主键、PIT 错误、价格异常、跨表日期不一致、基准覆盖不足和无法形成样本外评分等问题执行阻断。
@@ -159,7 +153,9 @@ outputs/runs/<run_id>/
 ├── factor_config_snapshot.yaml
 ├── backtest_config_snapshot.yaml
 ├── data_manifest.json
+├── research_protocol_snapshot.json
 ├── run_metadata.json
+├── evidence_manifest.json
 ├── run_summary.md
 ├── data_quality_report.md
 ├── metrics.csv
@@ -168,6 +164,20 @@ outputs/runs/<run_id>/
 ├── positions.csv
 └── figures/
     ├── walk_forward_*.csv
+    ├── factor_inference.csv
+    ├── group_test_nonoverlap.csv
+    ├── monthly_factor_ic.csv
+    ├── monthly_factor_returns.csv
+    ├── time_series_diagnostics.csv
+    ├── regime_probabilities.csv
+    ├── dynamic_factor_weights.csv
+    ├── volatility_forecasts.csv
+    ├── dynamic_covariance.csv
+    ├── forecast_comparison.csv
+    ├── model_selection_audit.csv
+    ├── strategy_oos_comparison.csv
+    ├── time_series_report.md
+    ├── execution_compliance.csv
     ├── factor_panel_timing.csv
     ├── robustness_scenarios.csv
     ├── unfilled_order_analysis.csv
@@ -176,7 +186,7 @@ outputs/runs/<run_id>/
     └── 其他因子、绩效与归因图表
 ```
 
-`run_metadata.json` 记录 run_id、包版本、Git 提交、数据版本哈希、股票池、因子列表、成本和执行假设。
+`run_metadata.json` 记录 run_id、包版本、Git 基础提交、源码树哈希、配置哈希、数据版本、股票池、因子列表、成本和执行假设。
 
 ## 关键研究假设
 
@@ -185,6 +195,8 @@ outputs/runs/<run_id>/
 - 财务数据仅在 `usable_date` 到达后可见，并保留报告期、公告日和可用日来源字段。
 - 历史指数成分、行业、ST、停牌、涨跌停和退市状态必须按当时可见信息处理。
 - 训练和验证标签必须在对应窗口边界前完整实现，避免未来收益跨窗泄漏。
+- 状态模型只输出截至信号日的 filtered probability，不使用含未来观测的 smoothed probability；动态权重只接收 `availability_date < test_date` 的 IC 标签。
+- 真实模式不能形成动态或规则式 OOS score 时直接失败；只有合成样例允许 `score_source=synthetic_fallback`。
 - 基准收益必须与策略日期严格对齐，不进行隐式前向填充。
 - Q5-Q1 等多空结果是因子诊断，不等同于 A 股市场中的可交易做空收益。
 - 回测成本、滑点和冲击参数属于研究假设，不能替代真实成交验证。
@@ -196,6 +208,8 @@ outputs/runs/<run_id>/
 ```powershell
 python -m ashare_factor_research.main quality
 ```
+
+默认 smoke 产物写入临时目录，不改写受版本控制的静态图表；只有显式传入 `--update-artifacts` 才更新展示产物。
 
 也可以分别执行：
 

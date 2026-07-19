@@ -12,16 +12,26 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def run_quality_checks(skip_notebooks: bool = False, require_ruff: bool = False) -> list[dict[str, object]]:
+def run_quality_checks(
+    skip_notebooks: bool = False,
+    require_ruff: bool = False,
+    update_artifacts: bool = False,
+) -> list[dict[str, object]]:
     root = project_root()
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(root / "src")
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(root / "src"), existing_pythonpath) if part
+    )
     commands = [
         ("compileall", [sys.executable, "-m", "compileall", "-q", "src", "tests"]),
         ("unittest", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
     ]
     if not skip_notebooks:
-        commands.append(("notebook-smoke", [sys.executable, "scripts/smoke_notebooks.py"]))
+        notebook_command = [sys.executable, "scripts/smoke_notebooks.py"]
+        if update_artifacts:
+            notebook_command.append("--update-artifacts")
+        commands.append(("notebook-smoke", notebook_command))
     if importlib.util.find_spec("ruff") is not None:
         commands.append(("ruff", [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"]))
     elif require_ruff:
@@ -44,4 +54,3 @@ def run_quality_checks(skip_notebooks: bool = False, require_ruff: bool = False)
             if completed.returncode:
                 raise RuntimeError(f"Quality step failed: {name}")
     return rows
-

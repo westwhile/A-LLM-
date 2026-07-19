@@ -86,6 +86,37 @@ class PerformanceAttributionTest(unittest.TestCase):
         self.assertIn("sortino", metrics)
         self.assertAlmostEqual(metrics["cost_drag"], 0.001)
 
+    def test_calc_performance_reports_common_active_interval(self):
+        dates = pd.date_range("2022-01-03", periods=5, freq="B")
+        nav = pd.DataFrame({
+            "trade_date": dates,
+            "gross_return": [0.0, 0.0, 0.02, -0.01, 0.01],
+            "cost": [0.0, 0.0, 0.001, 0.0, 0.0],
+            "net_return": [0.0, 0.0, 0.019, -0.01, 0.01],
+            "nav": [1.0, 1.0, 1.019, 1.00881, 1.0188981],
+            "turnover": [0.0, 0.0, 0.5, 0.0, 0.0],
+            "holding_count": [0.0, 0.0, 3.0, 3.0, 3.0],
+        })
+        benchmark = pd.Series([0.01] * 5, index=dates)
+        metrics = calc_performance(nav, benchmark_return=benchmark)
+        self.assertEqual(metrics["active_period_start"], "2022-01-05")
+        self.assertEqual(metrics["active_period_days"], 3.0)
+        self.assertIn("full_period_annual_excess_return", metrics)
+        expected_active_excess = ((0.019 - 0.01) + (-0.01 - 0.01) + (0.01 - 0.01)) / 3 * 252
+        self.assertAlmostEqual(metrics["annual_excess_return"], expected_active_excess)
+
+    def test_pre_investment_days_excludes_later_inactive_days(self):
+        dates = pd.date_range("2022-01-03", periods=5, freq="B")
+        nav = pd.DataFrame({
+            "trade_date": dates,
+            "net_return": [0.0, 0.0, 0.01, 0.0, 0.0],
+            "nav": [1.0, 1.0, 1.01, 1.01, 1.01],
+            "holding_count": [0.0, 0.0, 3.0, 0.0, 3.0],
+        })
+        metrics = calc_performance(nav)
+        self.assertEqual(metrics["pre_investment_days"], 2.0)
+        self.assertEqual(metrics["inactive_days_after_start"], 1.0)
+
     def test_security_contribution_and_cost_attribution(self):
         weights = pd.DataFrame(
             {

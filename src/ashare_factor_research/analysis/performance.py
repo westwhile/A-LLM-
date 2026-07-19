@@ -239,6 +239,50 @@ def calc_performance(
         "avg_holding_count": float(nav["holding_count"].mean()) if "holding_count" in nav else np.nan,
         "total_cost": float(nav["cost"].sum()) if "cost" in nav else np.nan,
     }
+    result.update({
+        "full_period_total_return": total_return,
+        "full_period_annual_return": annual_return,
+        "full_period_annual_volatility": annual_vol,
+        "full_period_sharpe": float(sharpe) if not np.isnan(sharpe) else np.nan,
+        "full_period_max_drawdown": mdd,
+    })
+    active_returns: pd.Series | None = None
+    if "holding_count" in nav:
+        invested = nav["holding_count"].gt(0)
+        result["invested_days"] = float(invested.sum())
+        result["avg_holding_count_invested_days"] = (
+            float(nav.loc[invested, "holding_count"].mean()) if invested.any() else np.nan
+        )
+        if "cash_weight" in nav:
+            result["avg_cash_weight_invested_days"] = (
+                float(nav.loc[invested, "cash_weight"].mean()) if invested.any() else np.nan
+            )
+            result["max_cash_weight_invested_days"] = (
+                float(nav.loc[invested, "cash_weight"].max()) if invested.any() else np.nan
+            )
+        if invested.any():
+            first_active = int(np.flatnonzero(invested.to_numpy())[0])
+            result["pre_investment_days"] = float(first_active)
+            active_nav = nav.iloc[first_active:].copy()
+            result["inactive_days_after_start"] = float((~active_nav["holding_count"].gt(0)).sum())
+            active_returns = _return_series(active_nav, "net_return").fillna(0.0)
+            active_total = float((1.0 + active_returns).prod() - 1.0)
+            active_annual = annualized_return_from_returns(active_returns, periods_per_year)
+            active_vol = float(active_returns.std(ddof=1) * np.sqrt(periods_per_year)) if len(active_returns) > 1 else np.nan
+            active_curve = (1.0 + active_returns).cumprod()
+            result.update({
+                "active_period_start": str(pd.to_datetime(active_nav["trade_date"].iloc[0]).date()),
+                "active_period_days": float(len(active_returns)),
+                "active_total_return": active_total,
+                "active_annual_return": active_annual,
+                "active_annual_volatility": active_vol,
+                "active_sharpe": float((active_annual - risk_free_rate) / active_vol)
+                if active_vol and not np.isnan(active_vol) else np.nan,
+                "active_max_drawdown": max_drawdown(active_curve),
+            })
+        else:
+            result["pre_investment_days"] = float(len(nav))
+            result["inactive_days_after_start"] = 0.0
     if gross_returns is not None:
         result["gross_total_return"] = float((1.0 + gross_returns).prod() - 1.0)
         result["net_total_return"] = float((1.0 + returns).prod() - 1.0)
@@ -248,12 +292,30 @@ def calc_performance(
         if len(aligned) > 1:
             excess = aligned["strategy_return"] - aligned["benchmark_return"]
             te = float(excess.std(ddof=1) * np.sqrt(periods_per_year))
-            result["annual_excess_return"] = float(excess.mean() * periods_per_year)
-            result["information_ratio"] = float(result["annual_excess_return"] / te) if te else np.nan
-            result["tracking_error"] = te
-            result["beta"] = beta(returns, benchmark_return, risk_free_rate, periods_per_year)
-            result["alpha"] = alpha(returns, benchmark_return, risk_free_rate, periods_per_year)
-            result["excess_max_drawdown"] = excess_max_drawdown(returns, benchmark_return)
+            full_excess = float(excess.mean() * periods_per_year)
+            result["full_period_annual_excess_return"] = full_excess
+            result["full_period_information_ratio"] = float(full_excess / te) if te else np.nan
+            result["full_period_tracking_error"] = te
+            relative_strategy = returns
+            relative_benchmark = benchmark_return
+            if active_returns is not None and len(active_returns) > 1:
+                relative_strategy = active_returns
+                relative_benchmark = benchmark_return.reindex(active_returns.index)
+            comparable = align_benchmark_returns(relative_strategy, relative_benchmark)
+            comparable_excess = comparable["strategy_return"] - comparable["benchmark_return"]
+            comparable_te = float(comparable_excess.std(ddof=1) * np.sqrt(periods_per_year))
+            result["annual_excess_return"] = float(comparable_excess.mean() * periods_per_year)
+            result["information_ratio"] = (
+                float(result["annual_excess_return"] / comparable_te) if comparable_te else np.nan
+            )
+            result["tracking_error"] = comparable_te
+            result["beta"] = beta(relative_strategy, relative_benchmark, risk_free_rate, periods_per_year)
+            result["alpha"] = alpha(relative_strategy, relative_benchmark, risk_free_rate, periods_per_year)
+            result["excess_max_drawdown"] = excess_max_drawdown(relative_strategy, relative_benchmark)
+            if active_returns is not None:
+                result["active_annual_excess_return"] = result["annual_excess_return"]
+                result["active_information_ratio"] = result["information_ratio"]
+                result["active_tracking_error"] = result["tracking_error"]
     return result
 
 

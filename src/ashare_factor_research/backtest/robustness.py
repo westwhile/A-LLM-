@@ -39,6 +39,9 @@ def run_execution_scenarios(
     cost_multipliers: tuple[tuple[str, float], ...] = (("zero", 0.0), ("standard", 1.0), ("high", 2.0)),
     min_trade_amount: float | None = None,
     max_turnover: float | None = 0.5,
+    initial_cash_values: tuple[float, ...] = (1_000_000.0,),
+    exclude_limit_up_for_buy: bool = True,
+    exclude_limit_down_for_sell: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, BacktestResult]]:
     rows: list[dict[str, object]] = []
     results: dict[str, BacktestResult] = {}
@@ -46,32 +49,39 @@ def run_execution_scenarios(
         cfg = replace(base_cost, **{key: value * multiplier for key, value in asdict(base_cost).items()})
         for delay in delays:
             for participation in participation_rates:
-                label = f"cost={cost_name}|delay={delay}|participation={participation or 'none'}"
-                result = run_event_backtest(
-                    portfolio,
-                    market,
-                    cost_config=cfg,
-                    execution_delay_days=delay,
-                    max_participation_rate=participation,
-                    min_trade_amount=min_trade_amount,
-                    max_turnover=max_turnover,
-                )
-                metrics = calc_performance(result.nav)
-                unfilled = result.orders["status"].ne("filled").sum() if not result.orders.empty else 0
-                rows.append(
-                    {
-                        "scenario": label,
-                        "cost_case": cost_name,
-                        "execution_delay_days": delay,
-                        "participation_rate": participation,
-                        "total_return": metrics.get("total_return"),
-                        "annualized_return": metrics.get("annualized_return"),
-                        "sharpe": metrics.get("sharpe"),
-                        "max_drawdown": metrics.get("max_drawdown"),
-                        "turnover": metrics.get("turnover"),
-                        "unfilled_order_count": int(unfilled),
-                    }
-                )
-                results[label] = result
+                for initial_cash in initial_cash_values:
+                    label = (
+                        f"cost={cost_name}|delay={delay}|participation={participation or 'none'}|"
+                        f"initial_cash={int(initial_cash)}"
+                    )
+                    result = run_event_backtest(
+                        portfolio,
+                        market,
+                        cost_config=cfg,
+                        execution_delay_days=delay,
+                        max_participation_rate=participation,
+                        min_trade_amount=min_trade_amount,
+                        max_turnover=max_turnover,
+                        initial_cash=float(initial_cash),
+                        exclude_limit_up_for_buy=exclude_limit_up_for_buy,
+                        exclude_limit_down_for_sell=exclude_limit_down_for_sell,
+                    )
+                    metrics = calc_performance(result.nav)
+                    unfilled = result.orders["status"].ne("filled").sum() if not result.orders.empty else 0
+                    rows.append(
+                        {
+                            "scenario": label,
+                            "cost_case": cost_name,
+                            "execution_delay_days": delay,
+                            "participation_rate": participation,
+                            "initial_cash": float(initial_cash),
+                            "total_return": metrics.get("total_return"),
+                            "annual_return": metrics.get("annual_return"),
+                            "sharpe": metrics.get("sharpe"),
+                            "max_drawdown": metrics.get("max_drawdown"),
+                            "avg_turnover": metrics.get("avg_turnover"),
+                            "unfilled_order_count": int(unfilled),
+                        }
+                    )
+                    results[label] = result
     return pd.DataFrame(rows), results
-

@@ -14,6 +14,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-notebooks", action="store_true")
     parser.add_argument("--require-ruff", action="store_true")
+    parser.add_argument("--update-artifacts", action="store_true")
     args = parser.parse_args()
-    print(run_quality_checks(args.skip_notebooks, args.require_ruff))
-
+    print(run_quality_checks(args.skip_notebooks, args.require_ruff, args.update_artifacts))

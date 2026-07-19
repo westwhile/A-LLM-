@@ -126,44 +126,71 @@ def market_cap_bucket_attribution(
 
 
 def cost_attribution(
-    trades: pd.DataFrame,
+    trades_or_fills: pd.DataFrame,
     nav_df: pd.DataFrame | None = None,
     cost_config: CostConfig | None = None,
+    initial_cash: float = 1.0,
 ) -> pd.DataFrame:
-    if trades.empty:
+    if initial_cash <= 0:
+        raise ValueError("initial_cash must be positive")
+    if trades_or_fills.empty:
         return pd.DataFrame(
             [
                 {
-                    "commission": 0.0,
-                    "stamp_tax": 0.0,
-                    "slippage": 0.0,
-                    "impact": 0.0,
+                    "commission_amount": 0.0,
+                    "stamp_tax_amount": 0.0,
+                    "slippage_amount": 0.0,
+                    "impact_amount": 0.0,
                     "total_cost": 0.0,
-                    "cost_to_gross_return": np.nan,
+                    "total_cost_ratio": 0.0,
+                    "cost_drag": 0.0,
+                    "reconciliation_residual": 0.0,
                 }
             ]
         )
-    require_columns(trades, ["buy_turnover", "sell_turnover", "gross_turnover", "cost"], "trades")
-    cfg = cost_config or CostConfig()
-    commission = float(
-        (trades["buy_turnover"] * cfg.commission_buy + trades["sell_turnover"] * cfg.commission_sell).sum()
-    )
-    stamp_tax = float((trades["sell_turnover"] * cfg.stamp_tax_sell).sum())
-    slippage = float((trades["gross_turnover"] * cfg.slippage).sum())
-    impact = float((trades["gross_turnover"] * cfg.impact_coef).sum())
-    total_cost = float(trades["cost"].sum())
+
+    frame = trades_or_fills
+    if {"commission", "stamp_tax", "slippage", "impact_cost", "total_cost"}.issubset(frame.columns):
+        commission = float(frame["commission"].sum())
+        stamp_tax = float(frame["stamp_tax"].sum())
+        slippage = float(frame["slippage"].sum())
+        impact = float(frame["impact_cost"].sum())
+        total_cost = float(frame["total_cost"].sum())
+    else:
+        require_columns(frame, ["buy_turnover", "sell_turnover", "gross_turnover", "cost"], "trades")
+        cfg = cost_config or CostConfig()
+        commission = float(
+            (frame["buy_turnover"] * cfg.commission_buy + frame["sell_turnover"] * cfg.commission_sell).sum()
+        )
+        stamp_tax = float((frame["sell_turnover"] * cfg.stamp_tax_sell).sum())
+        slippage = float((frame["gross_turnover"] * cfg.slippage).sum())
+        impact = float((frame["gross_turnover"] * cfg.impact_coef).sum())
+        total_cost = float(frame["cost"].sum())
+
     gross_total_return = np.nan
+    cost_drag = np.nan
     if nav_df is not None and "gross_return" in nav_df:
         gross_total_return = float((1.0 + nav_df["gross_return"].astype(float)).prod() - 1.0)
+        if "net_return" in nav_df:
+            net_total_return = float((1.0 + nav_df["net_return"].astype(float)).prod() - 1.0)
+            cost_drag = gross_total_return - net_total_return
+    total_cost_ratio = total_cost / initial_cash
     return pd.DataFrame(
         [
             {
-                "commission": commission,
-                "stamp_tax": stamp_tax,
-                "slippage": slippage,
-                "impact": impact,
+                "commission_amount": commission,
+                "stamp_tax_amount": stamp_tax,
+                "slippage_amount": slippage,
+                "impact_amount": impact,
                 "total_cost": total_cost,
-                "cost_to_gross_return": float(total_cost / gross_total_return) if gross_total_return else np.nan,
+                "commission_ratio": commission / initial_cash,
+                "stamp_tax_ratio": stamp_tax / initial_cash,
+                "slippage_ratio": slippage / initial_cash,
+                "impact_ratio": impact / initial_cash,
+                "total_cost_ratio": total_cost_ratio,
+                "gross_total_return": gross_total_return,
+                "cost_drag": cost_drag,
+                "reconciliation_residual": total_cost_ratio - cost_drag if pd.notna(cost_drag) else np.nan,
             }
         ]
     )

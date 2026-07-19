@@ -22,6 +22,36 @@ research:
     require_validation_sign: true
     max_factors: 12
 
+time_series:
+  enabled: true
+  min_history_start: "2015-01-01"
+  min_oos_months: 36
+  diagnostics:
+    max_lag: 12
+  regime:
+    states: 3
+    min_observations: 36
+    max_iterations: 50
+  dynamic_weights:
+    min_observations: 12
+    min_asset_count: 30
+    max_factors: 10
+    max_factor_weight: 0.20
+    max_fdr_q_value: 0.05
+    process_variance: 0.001
+    observation_variance: 0.01
+    turnover_penalty: 0.20
+  volatility:
+    model: gjr_garch
+    min_observations: 60
+    target_annual_volatility: 0.15
+    min_exposure: 0.90
+    max_exposure: 1.00
+  forecast:
+    horizon: 1
+    min_train_observations: 12
+    ewma_alpha: 0.20
+
 universe:
   index_code: "000905.SH"
   min_listed_days: 120

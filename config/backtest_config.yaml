@@ -12,15 +12,17 @@ cost:
   stamp_tax_sell: 0.0005
   slippage: 0.0005
   impact_coef: 0.0002
+  min_commission: 5.0
 
 execution:
   signal_price: close
   execution_price: next_open
-  fallback_execution_price: next_close_return_proxy
+  fallback_execution_price: none
   lot_size: 100
   max_turnover: 0.50
   min_trade_amount: null
   max_participation_rate: 0.05
+  initial_cash: 1000000
 
 robustness:
   execution_delay_days: [1, 2, 3]
@@ -29,3 +31,4 @@ robustness:
     zero: 0.0
     standard: 1.0
     high: 2.0
+  initial_cash_values: [1000000, 5000000, 10000000]

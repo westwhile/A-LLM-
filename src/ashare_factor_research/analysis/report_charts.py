@@ -152,6 +152,7 @@ def save_report_artifacts(
     score_ic_series: pd.Series | None = None,
     cost_summary: pd.DataFrame | None = None,
     benchmark_return: pd.Series | None = None,
+    non_overlapping_group_returns: pd.DataFrame | None = None,
 ) -> None:
     """Save report-ready CSV and PNG artifacts without requiring matplotlib."""
 
@@ -205,12 +206,13 @@ def save_report_artifacts(
     elif "mean" in ic_table:
         _save_bar_chart(ic_table["mean"], "Sample factor mean Rank IC", out / "ic_series.png")
 
-    if "Q5-Q1" in group_returns:
-        group_curve = (1.0 + group_returns["Q5-Q1"].fillna(0.0)).cumprod() - 1.0
+    valid_group_returns = non_overlapping_group_returns if non_overlapping_group_returns is not None else pd.DataFrame()
+    if "Q5-Q1" in valid_group_returns:
+        group_curve = (1.0 + valid_group_returns["Q5-Q1"].fillna(0.0)).cumprod() - 1.0
     else:
-        group_curve = group_returns.select_dtypes("number").mean(axis=1).fillna(0.0).cumsum()
+        group_curve = pd.Series(dtype=float)
     group_curve.to_csv(out / "group_return.csv", header=["long_short_cumulative"])
-    _save_line_chart(group_curve, "Sample grouped long-short return", out / "group_return.png")
+    _save_line_chart(group_curve, "Non-overlapping grouped long-short return", out / "group_return.png")
 
     _save_heatmap(corr.round(3), "Sample factor correlation", out / "factor_corr_heatmap.png")
 

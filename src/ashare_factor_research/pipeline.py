@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import numpy as np
 import pandas as pd
 from ashare_factor_research import __version__
 from ashare_factor_research.analysis.attribution import (
@@ -22,12 +23,14 @@ from ashare_factor_research.analysis.drawdown import drawdown_contribution, max_
 from ashare_factor_research.analysis.performance import calc_performance
 from ashare_factor_research.analysis.report_charts import save_report_artifacts, save_research_extension_charts
 from ashare_factor_research.backtest.backtest_engine import run_event_backtest
+from ashare_factor_research.backtest.compliance import audit_execution_compliance, summarize_execution_compliance
 from ashare_factor_research.backtest.cost_model import CostConfig
 from ashare_factor_research.backtest.portfolio_builder import build_portfolio
 from ashare_factor_research.backtest.robustness import run_execution_scenarios, summarize_unfilled_orders
 from ashare_factor_research.config import ConfigBundle, load_config_bundle
 from ashare_factor_research.data.data_cleaner import add_adjusted_prices, add_forward_returns, filter_universe
 from ashare_factor_research.data.data_loader import LocalDataLoader
+from ashare_factor_research.data.provenance import verify_data_directory, write_data_manifest
 from ashare_factor_research.data.data_quality import (
     REAL_DATA_EXPECTED_TABLES,
     has_blocking_issues,
@@ -36,7 +39,8 @@ from ashare_factor_research.data.data_quality import (
 from ashare_factor_research.data.trading_calendar import get_trade_dates, month_end_rebalance_dates, next_trade_date
 from ashare_factor_research.factor_testing.factor_decay import calc_factor_decay_table
 from ashare_factor_research.factor_testing.factor_selection import select_factors, write_selected_factors_report
-from ashare_factor_research.factor_testing.group_test import calc_group_returns
+from ashare_factor_research.factor_testing.group_test import calc_group_returns, calc_non_overlapping_group_returns
+from ashare_factor_research.factor_testing.inference import build_factor_inference
 from ashare_factor_research.factor_testing.ic_analysis import (
     calc_annual_ic_summary,
     calc_factor_rolling_ic,
@@ -61,6 +65,13 @@ from ashare_factor_research.llm.audit import (
     label_quality_passes,
     sample_labels_for_review,
     write_llm_event_audit_report,
+)
+from ashare_factor_research.governance.config_contract import validate_config_bundle
+from ashare_factor_research.reporting.evidence import write_evidence_manifest
+from ashare_factor_research.time_series.research import run_time_series_research
+from ashare_factor_research.time_series.models import (
+    deflated_sharpe_probability,
+    probability_of_backtest_overfitting,
 )
 
 
@@ -129,9 +140,18 @@ def build_factor_panel(
     horizon: int = 20,
     config_path: str | Path | None = None,
     index_code: str = "000905.SH",
+    min_listed_days: int = 120,
+    exclude_st: bool = True,
+    exclude_suspended: bool = True,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     _, factor_specs = _load_enabled_factor_specs(config_path)
     daily_bar = add_adjusted_prices(_prepare_market_data(data))
+    if start_date:
+        daily_bar = daily_bar[pd.to_datetime(daily_bar["trade_date"]) >= pd.Timestamp(start_date)]
+    if end_date:
+        daily_bar = daily_bar[pd.to_datetime(daily_bar["trade_date"]) <= pd.Timestamp(end_date)]
     for extra_horizon in sorted({5, 10, horizon, 60}):
         daily_bar = add_forward_returns(daily_bar, horizon=extra_horizon)
     daily_bar = filter_universe(
@@ -142,6 +162,9 @@ def build_factor_panel(
         suspension=data.get("suspension"),
         index_code=index_code,
         trade_dates=_trade_dates_from_data(data, daily_bar),
+        min_list_days=min_listed_days,
+        exclude_st=exclude_st,
+        exclude_suspended=exclude_suspended,
     )
     trade_dates = _trade_dates_from_data(data, daily_bar)
 
@@ -174,18 +197,213 @@ def build_factor_panel(
     return factors, factor_cols
 
 
-def _benchmark_return_series(data: dict[str, pd.DataFrame]) -> pd.Series | None:
+def _benchmark_return_series(data: dict[str, pd.DataFrame], index_code: str) -> pd.Series | None:
     benchmark = data.get("benchmark_index")
     if benchmark is None or benchmark.empty:
         return None
     df = benchmark.copy()
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df = df.sort_values(["index_code", "trade_date"])
-    if df["index_code"].nunique() > 1:
-        df = df[df["index_code"].eq(df["index_code"].iloc[0])]
+    df = df[df["index_code"].eq(index_code)]
+    if df.empty:
+        raise ValueError(f"Configured benchmark {index_code!r} is not present in benchmark_index")
     returns = df.set_index("trade_date")["close"].astype(float).pct_change().fillna(0.0)
     returns.name = "benchmark_return"
     return returns
+
+
+def _validate_real_history(
+    data: dict[str, pd.DataFrame],
+    research_config: dict[str, object],
+    time_series_config: dict[str, object],
+) -> None:
+    """Block real research that cannot support the declared training history."""
+
+    daily_bar = data.get("daily_bar", pd.DataFrame())
+    if daily_bar.empty or "trade_date" not in daily_bar:
+        raise ValueError("Real research requires a non-empty daily_bar with trade_date")
+    observed_start = pd.to_datetime(daily_bar["trade_date"]).min()
+    required_start = pd.Timestamp(str(time_series_config.get("min_history_start", "2015-01-01")))
+    research_start = research_config.get("start_date")
+    walk_forward = research_config.get("walk_forward", {})
+    if research_start:
+        months = int(walk_forward.get("train_months", 24)) + int(walk_forward.get("validation_months", 6))
+        required_start = min(required_start, pd.Timestamp(str(research_start)) - pd.DateOffset(months=months))
+    if observed_start > required_start:
+        raise ValueError(
+            "Real PIT history is too short for the declared walk-forward/time-series protocol: "
+            f"observed_start={observed_start.date()}, required_start<={required_start.date()}"
+        )
+
+
+def _write_strategy_comparison(
+    out: Path,
+    candidates: dict[str, pd.DataFrame],
+    processed: pd.DataFrame,
+    market_df: pd.DataFrame,
+    bundle: ConfigBundle,
+    *,
+    selected_source: str,
+    selected_portfolio: pd.DataFrame,
+    selected_backtest,
+    top_n: int,
+    max_weight: float,
+    exposure_scalars: pd.DataFrame,
+    benchmark_return: pd.Series | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Backtest available static, rule and dynamic scores on a common active interval."""
+
+    def markdown_table(frame: pd.DataFrame) -> str:
+        if frame.empty:
+            return ""
+        columns = [str(column) for column in frame.columns]
+        lines = ["| " + " | ".join(columns) + " |", "| " + " | ".join(["---"] * len(columns)) + " |"]
+        for row in frame.itertuples(index=False, name=None):
+            lines.append("| " + " | ".join(str(value).replace("|", "/") for value in row) + " |")
+        return "\n".join(lines)
+
+    portfolio_config = bundle.backtest.get("portfolio", {})
+    execution = bundle.backtest.get("execution", {})
+    universe = bundle.project.get("universe", {})
+    nav_by_name: dict[str, pd.DataFrame] = {}
+    status_rows: list[dict[str, object]] = []
+    for name, scores in candidates.items():
+        if scores.empty:
+            status_rows.append({"strategy": name, "status": "unavailable", "reason": "no_oos_scores"})
+            continue
+        if name == selected_source:
+            variant_portfolio = selected_portfolio
+            variant_backtest = selected_backtest
+        else:
+            use = scores[["trade_date", "ts_code", "score"]].dropna().merge(
+                processed[["trade_date", "ts_code", "industry_code"]].drop_duplicates(),
+                on=["trade_date", "ts_code"], how="left",
+            )
+            try:
+                variant_portfolio = build_portfolio(
+                    use,
+                    top_n=top_n,
+                    max_weight=max_weight,
+                    min_holding_count=min(top_n, int(portfolio_config.get("min_holding_count", top_n))),
+                    industry_col="industry_code",
+                    max_industry_weight=float(portfolio_config.get("max_industry_weight", 1.0)),
+                )
+            except ValueError as exc:
+                status_rows.append({"strategy": name, "status": "unavailable", "reason": str(exc)})
+                continue
+            if name == "time_series_dynamic" and not exposure_scalars.empty:
+                variant_portfolio = variant_portfolio.merge(
+                    exposure_scalars[["trade_date", "exposure_scalar"]], on="trade_date", how="left"
+                )
+                variant_portfolio["exposure_scalar"] = variant_portfolio["exposure_scalar"].fillna(1.0)
+                variant_portfolio["target_weight"] *= variant_portfolio["exposure_scalar"]
+            variant_backtest = run_event_backtest(
+                variant_portfolio,
+                market_df,
+                cost_config=bundle.cost,
+                lot_size=int(execution.get("lot_size", 100)),
+                max_turnover=execution.get("max_turnover", 0.5),
+                max_participation_rate=execution.get("max_participation_rate"),
+                min_trade_amount=execution.get("min_trade_amount"),
+                initial_cash=float(execution.get("initial_cash", 1_000_000.0)),
+                exclude_limit_up_for_buy=bool(universe.get("exclude_limit_up_for_buy", True)),
+                exclude_limit_down_for_sell=bool(universe.get("exclude_limit_down_for_sell", True)),
+            )
+        nav = variant_backtest.nav.copy()
+        nav["trade_date"] = pd.to_datetime(nav["trade_date"])
+        invested = nav["holding_count"].gt(0) if "holding_count" in nav else pd.Series(False, index=nav.index)
+        first_active = nav.loc[invested, "trade_date"].min() if invested.any() else pd.NaT
+        status_rows.append({
+            "strategy": name, "status": "available", "reason": "", "first_active_date": first_active,
+            "score_dates": int(pd.to_datetime(scores["trade_date"]).nunique()),
+        })
+        nav_by_name[name] = nav
+    active_starts = [pd.Timestamp(row["first_active_date"]) for row in status_rows if row.get("status") == "available" and pd.notna(row.get("first_active_date"))]
+    common_start = max(active_starts) if active_starts else pd.NaT
+    curve_rows: list[pd.DataFrame] = []
+    summary_rows: list[dict[str, object]] = []
+    for name, nav in nav_by_name.items():
+        comparable = nav[nav["trade_date"].ge(common_start)].copy() if pd.notna(common_start) else nav.iloc[0:0].copy()
+        if comparable.empty:
+            continue
+        comparable["comparison_nav"] = (1.0 + comparable["net_return"].astype(float)).cumprod()
+        comparable["strategy"] = name
+        curve_rows.append(comparable[["trade_date", "strategy", "comparison_nav", "net_return", "holding_count"]])
+        benchmark = benchmark_return.reindex(pd.to_datetime(comparable["trade_date"])) if benchmark_return is not None else None
+        if benchmark is not None:
+            benchmark.index = pd.to_datetime(comparable["trade_date"])
+        metrics = calc_performance(comparable, benchmark_return=benchmark)
+        summary_rows.append({
+            "strategy": name,
+            "common_start": common_start,
+            "observations": len(comparable),
+            "total_return": metrics.get("active_total_return", metrics.get("total_return")),
+            "sharpe": metrics.get("active_sharpe", metrics.get("sharpe")),
+            "max_drawdown": metrics.get("active_max_drawdown", metrics.get("max_drawdown")),
+            "annual_excess_return": metrics.get("active_annual_excess_return", metrics.get("annual_excess_return")),
+            "information_ratio": metrics.get("active_information_ratio", metrics.get("information_ratio")),
+        })
+    curves = pd.concat(curve_rows, ignore_index=True) if curve_rows else pd.DataFrame(
+        columns=["trade_date", "strategy", "comparison_nav", "net_return", "holding_count"]
+    )
+    summary = pd.DataFrame(summary_rows)
+    status = pd.DataFrame(status_rows)
+    curves.to_csv(out / "strategy_oos_comparison.csv", index=False)
+    summary.to_csv(out / "strategy_comparison_summary.csv", index=False)
+    status.to_csv(out / "strategy_comparison_status.csv", index=False)
+    strategy_audit_rows: list[dict[str, object]] = []
+    trial_count = max(int(curves["strategy"].nunique()), 1) if not curves.empty else 0
+    min_oos_months = int(bundle.project.get("time_series", {}).get("min_oos_months", 36))
+    for name, part in curves.groupby("strategy") if not curves.empty else []:
+        dsr = deflated_sharpe_probability(part["net_return"], trial_count=trial_count)
+        oos_months = int(pd.to_datetime(part["trade_date"]).dt.to_period("M").nunique())
+        probability = float(dsr.get("probability", np.nan))
+        strategy_audit_rows.append({
+            "audit_type": "deflated_sharpe",
+            "model": name,
+            "observations": len(part),
+            "oos_months": oos_months,
+            "trial_count": trial_count,
+            "dsr_probability": probability,
+            "pbo": np.nan,
+            "status": "eligible" if oos_months >= min_oos_months and probability >= 0.95 else "not_promoted",
+        })
+    pivot = curves.pivot(index="trade_date", columns="strategy", values="net_return") if not curves.empty else pd.DataFrame()
+    pbo = probability_of_backtest_overfitting(pivot)
+    strategy_audit_rows.append({
+        "audit_type": "probability_of_backtest_overfitting",
+        "model": "all_strategies",
+        "observations": pbo.get("observations", len(pivot)),
+        "oos_months": int(pd.to_datetime(curves["trade_date"]).dt.to_period("M").nunique()) if not curves.empty else 0,
+        "trial_count": trial_count,
+        "dsr_probability": np.nan,
+        "pbo": pbo.get("pbo"),
+        "status": pbo.get("status"),
+    })
+    audit_path = out / "model_selection_audit.csv"
+    existing_audit = pd.read_csv(audit_path) if audit_path.exists() else pd.DataFrame()
+    pd.concat([existing_audit, pd.DataFrame(strategy_audit_rows)], ignore_index=True, sort=False).to_csv(
+        audit_path, index=False
+    )
+    report_lines = [
+        "# Time-Series Strategy Comparison",
+        "",
+        f"- selected_score_source: {selected_source}",
+        f"- common_active_start: {common_start if pd.notna(common_start) else 'unavailable'}",
+        "- all comparisons use the same executable backtest and a common active interval.",
+        "",
+        "## Availability",
+        "",
+        markdown_table(status) if not status.empty else "No strategy variant was available.",
+        "",
+        "## Comparable OOS Metrics",
+        "",
+        markdown_table(summary) if not summary.empty else "Insufficient comparable OOS history.",
+        "",
+        "The CSV `strategy_oos_comparison.csv` contains the aligned curves. An unavailable complex model is not substituted silently.",
+    ]
+    (out / "time_series_report.md").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    return curves, summary
 
 
 def _write_factor_spec_table(factor_specs: list[FactorSpec], output_path: Path) -> pd.DataFrame:
@@ -207,20 +425,13 @@ def _write_factor_spec_table(factor_specs: list[FactorSpec], output_path: Path) 
     return out
 
 
-def _write_manifest(data: dict[str, pd.DataFrame], output_path: Path, mode: str) -> dict[str, object]:
-    manifest = {
-        "mode": mode,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "tables": {
-            name: {
-                "rows": int(len(df)),
-                "columns": list(df.columns),
-            }
-            for name, df in sorted(data.items())
-        },
-    }
-    output_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest
+def _write_manifest(
+    data: dict[str, pd.DataFrame],
+    output_path: Path,
+    mode: str,
+    source_manifest: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return write_data_manifest(data, output_path, mode=mode, source_manifest=source_manifest)
 
 
 def _copy_config_snapshots(run_dir: Path, bundle: ConfigBundle) -> None:
@@ -275,8 +486,10 @@ def _save_attribution(
     processed: pd.DataFrame,
     market_df: pd.DataFrame,
     trades: pd.DataFrame,
+    fills: pd.DataFrame,
     nav: pd.DataFrame,
     cost_config: CostConfig,
+    initial_cash: float,
 ) -> dict[str, pd.DataFrame]:
     returns = add_adjusted_prices(market_df)[["trade_date", "ts_code", "return_1d"]]
     industry = processed[["trade_date", "ts_code", "industry_code"]].drop_duplicates()
@@ -288,7 +501,7 @@ def _save_attribution(
     top_contrib, bottom_contrib = top_bottom_contributors(security_contrib)
     industry_attr = industry_return_attribution(portfolio, returns, industry)
     size_attr = market_cap_bucket_attribution(portfolio, returns, processed[["trade_date", "ts_code", "size"]].rename(columns={"size": "total_mv"}))
-    cost_summary = cost_attribution(trades, nav, cost_config=cost_config)
+    cost_summary = cost_attribution(fills, nav, cost_config=cost_config, initial_cash=initial_cash)
     nav_series = nav.assign(trade_date=pd.to_datetime(nav["trade_date"])).set_index("trade_date")["nav"]
     worst = max_drawdown_period(nav_series)
     if pd.notna(worst.get("start")) and pd.notna(worst.get("trough")):
@@ -356,6 +569,7 @@ def run_sample_pipeline(
     backtest_config_path: str | Path | None = None,
 ) -> dict[str, object]:
     bundle = load_config_bundle(project_config_path, config_path, backtest_config_path)
+    validate_config_bundle(bundle)
     data = LocalDataLoader(data_dir).load_all()
     return _run_pipeline_core(
         data=data,
@@ -383,17 +597,23 @@ def run_research_pipeline(
     run_id: str | None = None,
     fail_on_quality: bool | None = None,
     robustness: bool = False,
+    protocol: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if mode not in {"sample", "real"}:
         raise ValueError("mode must be 'sample' or 'real'")
+    bundle = load_config_bundle(project_config_path, config_path, backtest_config_path)
+    validate_config_bundle(bundle)
     run_name = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path(output_root) / run_name
     figures_dir = run_dir / "figures"
     run_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
-    bundle = load_config_bundle(project_config_path, config_path, backtest_config_path)
     if mode == "real" and not (Path(data_dir) / "data_manifest.json").exists():
         raise ValueError("Real mode requires data_manifest.json produced by import-data.")
+    source_manifest = None
+    if mode == "real":
+        verify_data_directory(data_dir, require_manifest=True)
+        source_manifest = json.loads((Path(data_dir) / "data_manifest.json").read_text(encoding="utf-8"))
     data = LocalDataLoader(data_dir, create_if_missing=mode == "sample").load_all()
     result = _run_pipeline_core(
         data=data,
@@ -408,7 +628,7 @@ def run_research_pipeline(
         robustness=robustness,
     )
     _copy_config_snapshots(run_dir, bundle)
-    manifest = _write_manifest(data, run_dir / "data_manifest.json", mode)
+    manifest = _write_manifest(data, run_dir / "data_manifest.json", mode, source_manifest=source_manifest)
     for name in ["metrics", "orders", "fills", "positions"]:
         frame_or_dict = result[name if name != "metrics" else "metrics"]
         if isinstance(frame_or_dict, dict):
@@ -421,7 +641,8 @@ def run_research_pipeline(
             shutil.copyfile(src, run_dir / quality_name)
     result["run_dir"] = run_dir
     _write_run_summary(run_dir, result, bundle, mode, run_name)
-    _write_run_metadata(run_dir, result, bundle, mode, run_name, manifest)
+    metadata = _write_run_metadata(run_dir, result, bundle, mode, run_name, manifest, protocol=protocol)
+    write_evidence_manifest(run_dir, run_metadata=metadata)
     return result
 
 
@@ -447,8 +668,23 @@ def _run_pipeline_core(
     factor_config, factor_specs = _load_enabled_factor_specs(config_path)
     project_meta = config_bundle.project.get("project", {})
     universe_config = config_bundle.project.get("universe", {})
+    research_config = config_bundle.project.get("research", {})
+    time_series_config = config_bundle.project.get("time_series", {})
+    if mode == "real":
+        _validate_real_history(data, research_config, time_series_config)
     index_code = str(universe_config.get("index_code", project_meta.get("benchmark", "000905.SH")))
-    factor_panel, factor_cols = build_factor_panel(data, horizon=horizon, config_path=config_path, index_code=index_code)
+    history_start = time_series_config.get("min_history_start", research_config.get("start_date"))
+    factor_panel, factor_cols = build_factor_panel(
+        data,
+        horizon=horizon,
+        config_path=config_path,
+        index_code=index_code,
+        min_listed_days=int(universe_config.get("min_listed_days", 120)),
+        exclude_st=bool(universe_config.get("exclude_st", True)),
+        exclude_suspended=bool(universe_config.get("exclude_suspended", True)),
+        start_date=history_start,
+        end_date=research_config.get("end_date"),
+    )
     llm_config = config_bundle.project.get("llm", {})
     labels = data.get("news_event", pd.DataFrame()).copy()
     if not labels.empty:
@@ -466,6 +702,10 @@ def _run_pipeline_core(
     min_coverage = 1.0 - float(processing_config.get("max_missing_ratio_by_date", 0.7))
     factor_panel = _mask_low_coverage_factors(factor_panel, factor_cols, raw_coverage["by_date"], min_coverage)
     neutralize_modes = {spec.name: spec.neutralize for spec in factor_specs}
+    return_col = f"future_return_{horizon}"
+    raw_inference = build_factor_inference(
+        factor_panel, factor_cols, return_col, hac_lags=max(horizon - 1, 0), variant="raw"
+    )
     processed, processing_audit = process_factors(
         factor_panel,
         factor_cols,
@@ -476,18 +716,42 @@ def _run_pipeline_core(
         neutralize_modes=neutralize_modes,
         return_audit=True,
     )
-    benchmark_return = _benchmark_return_series(data)
+    benchmark_return = _benchmark_return_series(data, index_code)
     if benchmark_return is not None:
         processed["benchmark_return"] = pd.to_datetime(processed["trade_date"]).map(benchmark_return)
+    market_df = add_adjusted_prices(_prepare_market_data(data))
     processed_coverage = audit_factor_coverage(processed, factor_cols)
-    return_col = f"future_return_{horizon}"
     processed["score"] = processed[factor_cols].mean(axis=1, skipna=True)
+    processed_inference = build_factor_inference(
+        processed, factor_cols, return_col, hac_lags=max(horizon - 1, 0), variant="processed"
+    )
+    factor_inference = pd.concat([raw_inference, processed_inference], ignore_index=True)
+    factor_inference.to_csv(out / "factor_inference.csv", index=False)
     ic_table = calc_factor_ic_table(processed, factor_cols, return_col=return_col)
     score_ic_series = calc_ic(processed, "score", return_col=return_col)
     group_returns = calc_group_returns(processed, "score", return_col=return_col)
     corr = factor_correlation(processed, factor_cols)
 
     rebal_dates = month_end_rebalance_dates(get_trade_dates(data["daily_bar"]))
+    if research_config.get("start_date"):
+        rebal_dates = rebal_dates[rebal_dates >= pd.Timestamp(str(research_config["start_date"]))]
+    if research_config.get("end_date"):
+        rebal_dates = rebal_dates[rebal_dates <= pd.Timestamp(str(research_config["end_date"]))]
+    group_returns_nonoverlap = calc_non_overlapping_group_returns(
+        processed, "score", return_col, rebal_dates
+    )
+    group_returns_nonoverlap.to_csv(out / "group_test_nonoverlap.csv")
+    time_series_result = run_time_series_research(
+        processed,
+        factor_cols,
+        market_df,
+        benchmark_return,
+        rebal_dates,
+        return_col,
+        config=time_series_config,
+    )
+    for name, frame in time_series_result.frames.items():
+        frame.to_csv(out / f"{name}.csv", index=False)
     wf_config = config_bundle.project.get("research", {}).get("walk_forward", {})
     walk_forward = build_walk_forward_scores(
         processed,
@@ -504,11 +768,28 @@ def _run_pipeline_core(
     )
     for name, frame in walk_forward.items():
         frame.to_csv(out / f"walk_forward_{name}.csv", index=False)
-    score_df = walk_forward["scores"][["trade_date", "ts_code", "score"]].dropna()
-    if score_df.empty:
+    static_score_df = processed[processed["trade_date"].isin(rebal_dates)][
+        ["trade_date", "ts_code", "score"]
+    ].dropna()
+    static_score_df["score_source"] = "synthetic_fallback" if mode == "sample" else "static_equal_weight"
+    walk_forward_score_df = walk_forward["scores"][["trade_date", "ts_code", "score"]].dropna()
+    if not walk_forward_score_df.empty:
+        walk_forward_score_df["score_source"] = "walk_forward_rule"
+    dynamic_score_df = time_series_result.dynamic_scores.copy()
+    if not dynamic_score_df.empty:
+        score_df = dynamic_score_df
+        score_source = "time_series_dynamic"
+    elif not walk_forward_score_df.empty:
+        score_df = walk_forward_score_df
+        score_source = "walk_forward_rule"
+    else:
         if mode == "real":
-            raise ValueError("Walk-forward configuration produced no out-of-sample scores.")
-        score_df = processed[processed["trade_date"].isin(rebal_dates)][["trade_date", "ts_code", "score"]].dropna()
+            raise ValueError(
+                "Real mode produced neither dynamic time-series nor walk-forward out-of-sample scores; "
+                "static/equal-weight fallback is prohibited."
+            )
+        score_df = static_score_df
+        score_source = "synthetic_fallback"
     score_df = score_df.merge(
         processed[["trade_date", "ts_code", "industry_code"]].drop_duplicates(),
         on=["trade_date", "ts_code"],
@@ -523,8 +804,19 @@ def _run_pipeline_core(
         industry_col="industry_code",
         max_industry_weight=float(portfolio_config.get("max_industry_weight", 1.0)),
     )
-    market_df = add_adjusted_prices(_prepare_market_data(data))
+    portfolio = portfolio.merge(
+        score_df[["trade_date", "ts_code", "score_source"]].drop_duplicates(),
+        on=["trade_date", "ts_code"],
+        how="left",
+    )
+    if score_source == "time_series_dynamic":
+        exposure_scalars = time_series_result.frames.get("exposure_scalars", pd.DataFrame())
+        if not exposure_scalars.empty:
+            portfolio = portfolio.merge(exposure_scalars[["trade_date", "exposure_scalar"]], on="trade_date", how="left")
+            portfolio["exposure_scalar"] = portfolio["exposure_scalar"].fillna(1.0)
+            portfolio["target_weight"] *= portfolio["exposure_scalar"]
     execution = config_bundle.backtest.get("execution", {})
+    initial_cash = float(execution.get("initial_cash", 1_000_000.0))
     backtest = run_event_backtest(
         portfolio,
         market_df,
@@ -533,6 +825,9 @@ def _run_pipeline_core(
         max_turnover=execution.get("max_turnover", 0.5),
         max_participation_rate=execution.get("max_participation_rate"),
         min_trade_amount=execution.get("min_trade_amount"),
+        initial_cash=initial_cash,
+        exclude_limit_up_for_buy=bool(universe_config.get("exclude_limit_up_for_buy", True)),
+        exclude_limit_down_for_sell=bool(universe_config.get("exclude_limit_down_for_sell", True)),
     )
     nav = backtest.nav
     trades = backtest.trades
@@ -544,6 +839,28 @@ def _run_pipeline_core(
             raise ValueError(f"Benchmark returns do not strictly cover strategy dates. Missing sample: {missing_dates}")
         benchmark_for_perf = None
     metrics = calc_performance(nav, benchmark_return=benchmark_for_perf)
+    static_name = "synthetic_fallback" if mode == "sample" else "static_equal_weight"
+    strategy_candidates = {
+        static_name: static_score_df,
+        "walk_forward_rule": walk_forward_score_df,
+        "time_series_dynamic": dynamic_score_df,
+    }
+    strategy_curves, strategy_summary = _write_strategy_comparison(
+        out,
+        strategy_candidates,
+        processed,
+        market_df,
+        config_bundle,
+        selected_source=score_source,
+        selected_portfolio=portfolio,
+        selected_backtest=backtest,
+        top_n=top_n,
+        max_weight=max_weight,
+        exposure_scalars=time_series_result.frames.get("exposure_scalars", pd.DataFrame()),
+        benchmark_return=benchmark_for_perf,
+    )
+    target_counts = portfolio.groupby("trade_date")["ts_code"].nunique() if not portfolio.empty else pd.Series(dtype=float)
+    metrics["avg_target_holding_count"] = float(target_counts.mean()) if not target_counts.empty else float("nan")
     exposure = industry_exposure(portfolio, processed[["trade_date", "ts_code", "industry_code"]])
     benchmark_exposure = _benchmark_industry_exposure(
         portfolio["trade_date"], data.get("index_member"), data["industry"], index_code
@@ -553,10 +870,31 @@ def _run_pipeline_core(
     else:
         active_exposure = pd.DataFrame(columns=["trade_date", "industry_code", "target_weight", "benchmark_weight", "active_weight"])
     active_exposure.to_csv(out / "active_industry_exposure.csv", index=False)
-    attribution = _save_attribution(out, portfolio, processed, market_df, trades, nav, config_bundle.cost)
+    attribution = _save_attribution(
+        out, portfolio, processed, market_df, trades, backtest.fills, nav, config_bundle.cost, initial_cash
+    )
     cost_summary = attribution["cost_summary"]
     unfilled_summary = summarize_unfilled_orders(backtest.orders)
     unfilled_summary.to_csv(out / "unfilled_order_analysis.csv", index=False)
+    compliance = audit_execution_compliance(
+        portfolio,
+        nav,
+        backtest.positions,
+        orders=backtest.orders,
+        market=market_df,
+        min_holding_count=min(top_n, int(portfolio_config.get("min_holding_count", top_n))),
+        max_weight=max_weight,
+        max_industry_weight=float(portfolio_config.get("max_industry_weight", 1.0)),
+        max_cash_weight=float(portfolio_config.get("max_cash_weight", 1.0)),
+        max_turnover=float(execution.get("max_turnover", 1.0)),
+        max_participation_rate=execution.get("max_participation_rate"),
+    )
+    compliance.to_csv(out / "execution_compliance.csv", index=False)
+    compliance_summary = summarize_execution_compliance(compliance)
+    compliance_summary.to_csv(out / "execution_compliance_summary.csv", index=False)
+    if mode == "real" and not compliance.empty and (~compliance["passed"].astype(bool)).any():
+        failed = compliance.loc[~compliance["passed"].astype(bool), "violation_reason"].drop_duplicates().head(5).tolist()
+        raise ValueError(f"Post-trade compliance failed in real mode: {failed}")
     scenario_summary = pd.DataFrame()
     if robustness:
         robust = config_bundle.backtest.get("robustness", {})
@@ -570,6 +908,9 @@ def _run_pipeline_core(
             cost_multipliers=cost_multipliers,
             min_trade_amount=execution.get("min_trade_amount"),
             max_turnover=execution.get("max_turnover", 0.5),
+            initial_cash_values=tuple(float(value) for value in robust.get("initial_cash_values", [initial_cash])),
+            exclude_limit_up_for_buy=bool(universe_config.get("exclude_limit_up_for_buy", True)),
+            exclude_limit_down_for_sell=bool(universe_config.get("exclude_limit_down_for_sell", True)),
         )
         scenario_summary.to_csv(out / "robustness_scenarios.csv", index=False)
 
@@ -585,6 +926,7 @@ def _run_pipeline_core(
         score_ic_series,
         cost_summary,
         benchmark_return=benchmark_for_perf,
+        non_overlapping_group_returns=group_returns_nonoverlap,
     )
     diagnostics = _save_diagnostics(out, processed, factor_cols, factor_specs, return_col, ic_table, corr)
     save_research_extension_charts(out, diagnostics["factor_decay"], scenario_summary)
@@ -615,6 +957,8 @@ def _run_pipeline_core(
         "ic_table": ic_table,
         "score_ic_series": score_ic_series,
         "group_returns": group_returns,
+        "group_returns_nonoverlap": group_returns_nonoverlap,
+        "factor_inference": factor_inference,
         "portfolio": portfolio,
         "industry_exposure": exposure,
         "active_industry_exposure": active_exposure,
@@ -624,11 +968,17 @@ def _run_pipeline_core(
         "fills": backtest.fills,
         "positions": backtest.positions,
         "metrics": metrics,
+        "score_source": score_source,
+        "time_series": time_series_result,
+        "strategy_comparison": strategy_curves,
+        "strategy_comparison_summary": strategy_summary,
         "quality_issues": quality_issues,
         "diagnostics": diagnostics,
         "attribution": attribution,
         "walk_forward": walk_forward,
         "unfilled_summary": unfilled_summary,
+        "execution_compliance": compliance,
+        "execution_compliance_summary": compliance_summary,
         "robustness_summary": scenario_summary,
     }
 
@@ -655,6 +1005,8 @@ def _write_run_summary(
         f"- data interpretation: {'synthetic engineering validation' if mode == 'sample' else 'standardized real-data research'}",
         f"- benchmark: {project.get('benchmark')}", f"- configured range: {research.get('start_date')} to {research.get('end_date')}",
         f"- actual factor-panel range: {actual_start} to {actual_end}",
+        f"- score_source: {result.get('score_source', 'unknown')}",
+        f"- time_series_status: {getattr(result.get('time_series'), 'status', 'unknown')}",
         f"- universe: {bundle.project.get('universe', {}).get('index_code')}",
         f"- rebalance: {portfolio.get('rebalance_frequency')}", f"- top_n: {portfolio.get('top_n')}",
         f"- max_weight: {portfolio.get('max_weight')}", f"- cost assumptions: {cost}",
@@ -672,29 +1024,52 @@ def _write_run_metadata(
     mode: str,
     run_id: str,
     manifest: dict[str, object],
-) -> None:
-    manifest_text = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+    protocol: dict[str, object] | None = None,
+) -> dict[str, object]:
     metadata = {
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "package_version": __version__,
         "git_commit": _git_commit(),
+        "source_tree_sha256": _source_tree_sha256(),
         "mode": mode,
-        "data_version": hashlib.sha256(manifest_text.encode("utf-8")).hexdigest(),
+        "data_version": manifest.get("data_version"),
         "config_paths": {key: str(path) for key, path in bundle.paths.items()},
+        "config_sha256": {key: hashlib.sha256(Path(path).read_bytes()).hexdigest() for key, path in bundle.paths.items()},
         "universe": bundle.project.get("universe", {}),
         "research": bundle.project.get("research", {}),
+        "time_series": bundle.project.get("time_series", {}),
         "portfolio": bundle.backtest.get("portfolio", {}),
         "cost": bundle.backtest.get("cost", {}),
         "execution": bundle.backtest.get("execution", {}),
         "factors": list(result.get("factor_cols", [])),
+        "score_source": result.get("score_source"),
+        "time_series_status": getattr(result.get("time_series"), "status", None),
+        "robustness_scenario_count": int(len(result.get("robustness_summary", []))),
+        "protocol_sha256": protocol.get("protocol_sha256") if protocol else None,
+        "protocol_path": protocol.get("protocol_path") if protocol else None,
     }
     (run_dir / "run_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
+    if protocol:
+        (run_dir / "research_protocol_snapshot.json").write_text(
+            json.dumps(protocol, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+        )
+    return metadata
 
 
 def _git_commit() -> str:
+    git_dir = PROJECT_ROOT / ".git"
+    head_path = git_dir / "HEAD"
+    if head_path.exists():
+        head = head_path.read_text(encoding="ascii").strip()
+        if head.startswith("ref: "):
+            ref_path = git_dir / head.removeprefix("ref: ")
+            if ref_path.exists():
+                return ref_path.read_text(encoding="ascii").strip()
+        elif len(head) == 40:
+            return head
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -707,3 +1082,12 @@ def _git_commit() -> str:
         return completed.stdout.strip() if completed.returncode == 0 else "unknown"
     except (OSError, subprocess.SubprocessError):
         return "unknown"
+
+
+def _source_tree_sha256() -> str:
+    digest = hashlib.sha256()
+    for path in sorted((PROJECT_ROOT / "src").rglob("*.py")):
+        digest.update(path.relative_to(PROJECT_ROOT).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()

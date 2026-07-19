@@ -11,6 +11,9 @@ import pandas as pd
 
 from ashare_factor_research import __version__
 from ashare_factor_research.config import load_config_bundle
+from ashare_factor_research.data.provenance import verify_data_directory
+from ashare_factor_research.governance.config_contract import config_path_summary, validate_config_bundle
+from ashare_factor_research.governance.protocol import load_research_protocol
 from ashare_factor_research.data.data_loader import AkShareProvider, LocalDataLoader
 from ashare_factor_research.data.import_standard import import_standard_tables
 from ashare_factor_research.data.data_quality import (
@@ -217,6 +220,25 @@ def main() -> None:
     quality_all = sub.add_parser("quality", help="Run compile, tests, CLI and notebook smoke gates.")
     quality_all.add_argument("--skip-notebooks", action="store_true")
     quality_all.add_argument("--require-ruff", action="store_true")
+    quality_all.add_argument("--update-artifacts", action="store_true")
+
+    validate_config = sub.add_parser("validate-config", help="Validate configuration values and reject unconsumed keys.")
+    validate_config.add_argument("--project-config", default="config/project_config.yaml")
+    validate_config.add_argument("--factor-config", default="config/factor_config.yaml")
+    validate_config.add_argument("--backtest-config", default="config/backtest_config.yaml")
+
+    verify_data = sub.add_parser("verify-data", help="Verify standardized data schema and content hashes.")
+    verify_data.add_argument("--data-dir", required=True)
+    verify_data.add_argument("--mode", choices=["sample", "real"], default="real")
+
+    research = sub.add_parser("run-research", help="Run a frozen research protocol.")
+    research.add_argument("--protocol", required=True)
+    research.add_argument("--run-id")
+    research.add_argument("--robustness", action="store_true")
+
+    advisor = sub.add_parser("build-advisor-report", help="Build the advisor DOCX from one completed run directory.")
+    advisor.add_argument("--run-dir", required=True)
+    advisor.add_argument("--output")
 
     sub.add_parser("build-report", help="Build the checked-in Markdown research report as PDF.")
 
@@ -255,7 +277,43 @@ def main() -> None:
         elif args.command == "label-events":
             raise SystemExit(_cmd_label_events(args))
         elif args.command == "quality":
-            print(json.dumps(run_quality_checks(args.skip_notebooks, args.require_ruff), ensure_ascii=False, indent=2, default=_json_default))
+            print(json.dumps(run_quality_checks(args.skip_notebooks, args.require_ruff, args.update_artifacts), ensure_ascii=False, indent=2, default=_json_default))
+        elif args.command == "validate-config":
+            bundle = load_config_bundle(args.project_config, args.factor_config, args.backtest_config)
+            result = validate_config_bundle(bundle)
+            print(json.dumps({
+                "valid": result.is_valid,
+                "warnings": result.warnings,
+                "unconsumed_paths": result.unconsumed_paths,
+                "config_paths": config_path_summary(bundle),
+            }, ensure_ascii=False, indent=2))
+        elif args.command == "verify-data":
+            result = verify_data_directory(args.data_dir, require_manifest=args.mode == "real")
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=_json_default))
+        elif args.command == "run-research":
+            protocol = load_research_protocol(args.protocol)
+            result = run_research_pipeline(
+                data_dir=protocol["data_dir"],
+                output_root=protocol["output_root"],
+                mode=protocol["mode"],
+                project_config_path=protocol["project_config"],
+                config_path=protocol["factor_config"],
+                backtest_config_path=protocol["backtest_config"],
+                run_id=args.run_id or protocol.get("run_id"),
+                robustness=args.robustness,
+                protocol=protocol,
+            )
+            print(json.dumps({"run_dir": str(result["run_dir"]), "metrics": result["metrics"]}, ensure_ascii=False, indent=2))
+        elif args.command == "build-advisor-report":
+            command = [sys.executable, "scripts/build_advisor_report_docx.py", "--run-dir", args.run_dir]
+            if args.output:
+                command.extend(["--output", args.output])
+            completed = subprocess.run(
+                command,
+                check=False,
+            )
+            if completed.returncode:
+                raise RuntimeError("Advisor report build failed")
         elif args.command == "build-report":
             completed = subprocess.run([sys.executable, "scripts/build_report_pdf.py"], check=False)
             if completed.returncode:

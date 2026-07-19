@@ -17,7 +17,11 @@ def align_financial_to_dates(
         "financial_indicator",
     )
     rows = []
-    fin = financial_indicator.sort_values(["ts_code", "usable_date"]).copy()
+    sort_cols = ["ts_code", "usable_date"]
+    sort_cols.extend(col for col in ["ann_date", "report_period"] if col in financial_indicator)
+    sort_cols.extend(col for col in ["revision_time", "update_time", "revision_id"] if col in financial_indicator)
+    fin = financial_indicator.sort_values(sort_cols).copy()
+    fin = fin.drop_duplicates(["ts_code", "usable_date"], keep="last")
     fin["financial_usable_date"] = pd.to_datetime(fin["usable_date"])
     if "roe_delta" not in fin:
         fin["roe_delta"] = fin.groupby("ts_code")["roe"].diff()

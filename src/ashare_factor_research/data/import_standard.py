@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from ashare_factor_research.data.data_loader import STANDARD_TABLES
+from ashare_factor_research.data.provenance import SCHEMA_VERSION, dataframe_sha256
 from ashare_factor_research.data.schema import DATE_COLUMNS, normalize_table_dates, validate_schema
 from ashare_factor_research.utils.io import ensure_dir, load_yaml
 
@@ -27,6 +28,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_financial_revisions(frame: pd.DataFrame) -> pd.DataFrame:
+    """Resolve same-announcement duplicates only when revision order is explicit."""
+    keys = ["ts_code", "report_period", "ann_date"]
+    if not set(keys).issubset(frame.columns) or not frame.duplicated(keys, keep=False).any():
+        return frame
+    revision_cols = [col for col in ["revision_time", "update_time", "revision_id"] if col in frame]
+    if not revision_cols:
+        raise ValueError("Duplicate financial announcements require revision_time, update_time, or revision_id")
+    return frame.sort_values([*keys, *revision_cols], kind="mergesort").drop_duplicates(keys, keep="last")
+
+
 def import_standard_tables(
     source_dir: str | Path,
     output_dir: str | Path,
@@ -42,6 +54,7 @@ def import_standard_tables(
     mapping = load_yaml(mapping_path) if mapping_path else {}
     manifest: dict[str, Any] = {
         "manifest_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source_dir": str(source.resolve()),
         "output_dir": str(output.resolve()),
@@ -57,6 +70,8 @@ def import_standard_tables(
         if table_mapping:
             frame = frame.rename(columns=table_mapping)
         frame = normalize_table_dates(frame, table)
+        if table == "financial_indicator":
+            frame = resolve_financial_revisions(frame)
         validate_schema(frame, table, check_primary_key=True)
         sort_cols = [col for col in DATE_COLUMNS.get(table, []) if col in frame]
         if "ts_code" in frame:
@@ -80,6 +95,8 @@ def import_standard_tables(
             "source": str(input_path.resolve()),
             "source_sha256": _sha256(input_path),
             "path": str(output_path.resolve()),
+            "output_sha256": _sha256(output_path),
+            "content_sha256": dataframe_sha256(frame),
             "rows": int(len(frame)),
             "columns": list(frame.columns),
             "dtypes": {col: str(dtype) for col, dtype in frame.dtypes.items()},
@@ -87,7 +104,20 @@ def import_standard_tables(
         }
     if not manifest["tables"]:
         raise FileNotFoundError(f"No standard tables found in {source}")
+    fingerprint = {
+        "schema_version": manifest["schema_version"],
+        "tables": {
+            name: {
+                "rows": metadata["rows"],
+                "columns": metadata["columns"],
+                "content_sha256": metadata["content_sha256"],
+            }
+            for name, metadata in sorted(manifest["tables"].items())
+        },
+    }
+    manifest["data_version"] = hashlib.sha256(
+        json.dumps(fingerprint, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     manifest_path = output / "data_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
-

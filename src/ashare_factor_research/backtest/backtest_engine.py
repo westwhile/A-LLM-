@@ -93,6 +93,8 @@ def run_event_backtest(
     max_participation_rate: float | None = None,
     min_trade_amount: float | None = None,
     execution_delay_days: int = 1,
+    exclude_limit_up_for_buy: bool = True,
+    exclude_limit_down_for_sell: bool = True,
 ) -> BacktestResult:
     """Run next-open event backtest with orders, fills, positions, and cash.
 
@@ -112,7 +114,11 @@ def run_event_backtest(
     if execution_delay_days < 1:
         raise ValueError("execution_delay_days must be at least 1")
 
-    market = mark_tradability(market_df.copy())
+    market = mark_tradability(
+        market_df.copy(),
+        exclude_limit_up_for_buy=exclude_limit_up_for_buy,
+        exclude_limit_down_for_sell=exclude_limit_down_for_sell,
+    )
     market[date_col] = pd.to_datetime(market[date_col])
     trade_dates = pd.DatetimeIndex(sorted(market[date_col].dropna().unique()))
     market_by_date = {
@@ -138,9 +144,11 @@ def run_event_backtest(
     order_rows: list[dict[str, object]] = []
     fill_rows: list[dict[str, object]] = []
     position_rows: list[dict[str, object]] = []
+    last_close_prices = pd.Series(dtype=float)
 
     for mark_date in trade_dates:
         day_market = market_by_date[mark_date]
+        open_valuation_prices = day_market["open"].dropna().combine_first(last_close_prices)
         day_cost = 0.0
         day_turnover = 0.0
         day_buy_turnover = 0.0
@@ -157,7 +165,8 @@ def run_event_backtest(
                 positions=positions,
                 cash=cash,
                 day_market=day_market,
-                portfolio_value=_portfolio_value_at_price(cash, positions, day_market["open"]),
+                portfolio_value=_portfolio_value_at_price(cash, positions, open_valuation_prices),
+                valuation_prices=open_valuation_prices,
                 cost_config=cost_config,
                 lot_size=lot_size,
                 max_turnover=max_turnover,
@@ -189,7 +198,7 @@ def run_event_backtest(
                 }
             )
 
-        close_prices = day_market["close"]
+        close_prices = day_market["close"].dropna().combine_first(last_close_prices)
         portfolio_value = _portfolio_value_at_price(cash, positions, close_prices)
         net_return = portfolio_value / previous_value - 1.0 if previous_value else 0.0
         gross_return = (portfolio_value + day_cost) / previous_value - 1.0 if previous_value else net_return
@@ -211,6 +220,7 @@ def run_event_backtest(
         )
         position_rows.extend(_position_rows(mark_date, positions, close_prices, portfolio_value))
         previous_value = portfolio_value
+        last_close_prices = day_market["close"].dropna().combine_first(last_close_prices)
 
     return BacktestResult(
         nav=pd.DataFrame(nav_rows),
@@ -238,6 +248,7 @@ def _rebalance_at_open(
     cash: float,
     day_market: pd.DataFrame,
     portfolio_value: float,
+    valuation_prices: pd.Series,
     cost_config: CostConfig | None,
     lot_size: int,
     max_turnover: float | None,
@@ -246,7 +257,7 @@ def _rebalance_at_open(
 ) -> dict[str, object]:
     open_prices = day_market["open"]
     all_codes = positions.index.union(target_weights.index)
-    current_values = positions.reindex(all_codes, fill_value=0.0) * open_prices.reindex(all_codes)
+    current_values = positions.reindex(all_codes, fill_value=0.0) * valuation_prices.reindex(all_codes)
     current_values = current_values.fillna(0.0)
     current_weights = current_values / portfolio_value if portfolio_value else current_values
     target = target_weights.reindex(all_codes, fill_value=0.0).clip(lower=0.0)
@@ -429,8 +440,12 @@ def _execute_order(
         if status != "filled":
             reason = "insufficient_position"
     else:
-        unit_cost = price * (1.0 + _buy_cost_rate(cost_config))
-        affordable_quantity = int(next_cash // (unit_cost * lot_size) * lot_size)
+        affordable_quantity = _affordable_buy_quantity(
+            cash=next_cash,
+            price=price,
+            lot_size=lot_size,
+            cost_config=cost_config,
+        )
         quantity = min(requested_quantity, affordable_quantity)
         status = "filled" if quantity == requested_quantity else "partially_filled"
         reason = audit_reason if status == "filled" and audit_reason == "volume_participation_limit" else ""
@@ -586,3 +601,24 @@ def _apply_max_turnover(
 def _buy_cost_rate(config: CostConfig | None) -> float:
     cfg = config or CostConfig()
     return cfg.commission_buy + cfg.slippage + cfg.impact_coef
+
+
+def _affordable_buy_quantity(
+    cash: float,
+    price: float,
+    lot_size: int,
+    cost_config: CostConfig | None,
+) -> int:
+    """Return the largest board-lot quantity whose all-in cash cost is affordable."""
+
+    if cash <= 0 or price <= 0:
+        return 0
+    unit_cost = price * (1.0 + _buy_cost_rate(cost_config))
+    quantity = int(cash // (unit_cost * lot_size) * lot_size)
+    while quantity > 0:
+        notional = float(quantity * price)
+        total_cash_required = notional + estimate_trade_cost(notional, "buy", cost_config)["total_cost"]
+        if total_cash_required <= cash + 1e-9:
+            return quantity
+        quantity -= lot_size
+    return 0

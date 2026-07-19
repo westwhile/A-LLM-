@@ -113,6 +113,22 @@ def audit_table(df: pd.DataFrame, table_name: str) -> pd.DataFrame:
         issues.extend(_audit_financial_point_in_time(df, table_name))
     if table_name == "benchmark_index":
         issues.extend(_audit_benchmark(df, table_name))
+    if table_name == "news_event" and len(df):
+        if "publish_time" not in df.columns:
+            issues.append(_issue(
+                table_name,
+                "publish_time_missing",
+                "warning",
+                len(df),
+                "Date-only events cannot distinguish intraday from after-close publication.",
+            ))
+        if "sentiment" in df:
+            invalid = int((~df["sentiment"].isin(["positive", "neutral", "negative"])).sum())
+            issues.append(_issue(table_name, "sentiment_enum", "blocking" if invalid else "ok", invalid, "Sentiment must use the declared enum."))
+        if "confidence" in df:
+            confidence = pd.to_numeric(df["confidence"], errors="coerce")
+            invalid = int((confidence.isna() | ~confidence.between(0, 1)).sum())
+            issues.append(_issue(table_name, "confidence_range", "blocking" if invalid else "ok", invalid, "Confidence must be within [0, 1]."))
 
     return pd.DataFrame(issues)
 
@@ -202,7 +218,7 @@ def audit_tables(
             _issue(
                 table,
                 "missing_table",
-                "warning" if table in {"news_event", "suspension", "st_status"} else "blocking",
+                "warning" if table == "news_event" else "blocking",
                 table,
                 "Expected standardized table is not present.",
             )
@@ -269,6 +285,21 @@ def _audit_cross_table_consistency(tables: dict[str, pd.DataFrame]) -> list[dict
     if industry is not None and "industry_code" in industry:
         missing = float(industry["industry_code"].isna().mean()) if len(industry) else 0.0
         issues.append(_issue("industry", "industry_code_missing_rate", "blocking" if missing > 0.2 else ("warning" if missing else "ok"), round(missing, 6), "Industry coverage at signal time."))
+    financial = tables.get("financial_indicator")
+    if financial is not None and not financial.empty and calendar is not None and not calendar.empty:
+        open_calendar = calendar.copy()
+        if "is_open" in open_calendar:
+            open_calendar = open_calendar[open_calendar["is_open"].astype(bool)]
+        open_dates = set(pd.to_datetime(open_calendar["trade_date"]))
+        usable = pd.to_datetime(financial["usable_date"], errors="coerce")
+        outside = int((usable.notna() & ~usable.isin(open_dates)).sum())
+        issues.append(_issue(
+            "financial_indicator",
+            "usable_date_outside_trade_calendar",
+            "blocking" if outside else "ok",
+            outside,
+            "Financial usable_date must be an open exchange trading date.",
+        ))
     intervals = [
         ("index_member", ["index_code", "ts_code"], "in_date", "out_date"),
         ("st_status", ["ts_code"], "start_date", "end_date"),

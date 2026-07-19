@@ -46,6 +46,43 @@ def calc_group_returns(
     return grouped
 
 
+def calc_non_overlapping_group_returns(
+    factor_df: pd.DataFrame,
+    factor_col: str,
+    return_col: str,
+    rebalance_dates: pd.DatetimeIndex,
+    *,
+    date_col: str = "trade_date",
+    target_end_col: str = "target_return_end_date",
+    n_groups: int = 5,
+) -> pd.DataFrame:
+    """Calculate portfolio-sort returns only on declared non-overlapping signal dates.
+
+    When target-end metadata is present, every holding period must finish before
+    the next selected signal date. This prevents overlapping forward labels from
+    being silently compounded as a tradable return series.
+    """
+
+    dates = pd.DatetimeIndex(pd.to_datetime(rebalance_dates)).sort_values().unique()
+    selected = factor_df[pd.to_datetime(factor_df[date_col]).isin(dates)].copy()
+    if target_end_col in selected and not selected.empty:
+        timing = (
+            selected.assign(**{date_col: pd.to_datetime(selected[date_col]), target_end_col: pd.to_datetime(selected[target_end_col])})
+            .groupby(date_col, as_index=False)[target_end_col]
+            .max()
+            .sort_values(date_col)
+        )
+        next_signal = timing[date_col].shift(-1)
+        overlap = timing[target_end_col].ge(next_signal) & next_signal.notna()
+        if overlap.any():
+            sample = timing.loc[overlap, [date_col, target_end_col]].head(3).to_dict("records")
+            raise ValueError(f"Selected group-test holding periods overlap: {sample}")
+    result = calc_group_returns(selected, factor_col, return_col, date_col=date_col, n_groups=n_groups)
+    result.index = pd.to_datetime(result.index)
+    result.index.name = date_col
+    return result
+
+
 def calc_group_counts(
     factor_df: pd.DataFrame,
     factor_col: str,
