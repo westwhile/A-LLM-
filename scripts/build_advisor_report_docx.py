@@ -18,7 +18,7 @@ from docx.shared import Inches, Mm, Pt, RGBColor
 ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / "reports"
 FIGURES = REPORTS / "figures"
-OUTPUT = REPORTS / "导师汇报_A股多因子选股策略研究.docx"
+OUTPUT = REPORTS / "advisor" / "导师汇报_A股多因子选股策略研究.docx"
 RUN_DIR: Path | None = None
 RUN_METADATA: dict[str, object] = {}
 
