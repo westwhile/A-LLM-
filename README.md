@@ -49,7 +49,22 @@
 - Windows PowerShell、macOS 或 Linux shell。
 - 真实数据导入建议安装 `pyarrow`；AkShare 拉取需要安装 `akshare`。
 
-推荐使用虚拟环境并安装项目依赖：
+推荐使用项目自带的 Conda 环境定义（固定 Python 3.12，并使用 `conda-forge`）：
+
+```powershell
+conda env create -f environment.yml
+conda activate ashare-factor-research
+python -m pip install -e ".[data,research,test]"
+```
+
+环境定义更新后可执行：
+
+```powershell
+conda env update -n ashare-factor-research -f environment.yml
+python -m pip install -e ".[data,research,test]"
+```
+
+若不使用 Conda，也可用标准虚拟环境安装：
 
 ```powershell
 python -m venv .venv
