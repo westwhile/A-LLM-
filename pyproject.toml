@@ -8,15 +8,15 @@ version = "0.3.0"
 description = "Auditable A-share multi-factor research framework with PIT controls, walk-forward validation, execution-aware backtesting, and LLM event auditing."
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=1.24",
-    "pandas>=2.0",
+    "numpy>=1.26,<2.0",
+    "pandas>=2.2,<3.0",
     "Pillow>=10.0",
     "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 data = ["akshare>=1.14", "pyarrow>=15.0"]
-research = ["matplotlib>=3.8", "reportlab>=4.0", "statsmodels>=0.14"]
+research = ["matplotlib>=3.8", "python-docx>=1.1", "reportlab>=4.0", "statsmodels>=0.14"]
 test = ["pytest>=8.0"]
 
 [project.scripts]
