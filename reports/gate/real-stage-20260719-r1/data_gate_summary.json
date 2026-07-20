@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "status": "blocked_by_missing_pit_tables",
+  "required_start": "2015-01-01",
+  "benchmark": "000905.SH",
+  "minimum_coverage": 0.95,
+  "source_registry_sha256": "e0a365ce6b0c41705d5b7e30e0f3c0d978a737253530646af91dc6d632991aec",
+  "missing_required_tables": [
+    "daily_basic",
+    "financial_indicator",
+    "index_member",
+    "industry",
+    "limit_price",
+    "st_status",
+    "suspension"
+  ],
+  "blocking_reasons": [
+    "missing required tables: ['daily_basic', 'financial_indicator', 'index_member', 'industry', 'limit_price', 'st_status', 'suspension']",
+    "import manifest is not ready_for_quality_audit",
+    "data quality failed: daily_basic.missing_table",
+    "data quality failed: financial_indicator.missing_table",
+    "data quality failed: index_member.missing_table",
+    "data quality failed: industry.missing_table",
+    "data quality failed: limit_price.missing_table",
+    "data quality failed: st_status.missing_table",
+    "data quality failed: suspension.missing_table",
+    "pit_timing_audit.csv: no auditable rows",
+    "financial_revision_audit.csv: no auditable rows",
+    "survivorship_audit.csv: no auditable rows",
+    "universe_coverage.csv: no auditable rows"
+  ],
+  "audit_rows": {
+    "pit_timing_audit.csv": 0,
+    "financial_revision_audit.csv": 0,
+    "survivorship_audit.csv": 0,
+    "universe_coverage.csv": 0,
+    "benchmark_alignment.csv": 2803
+  }
+}

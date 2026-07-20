@@ -31,6 +31,8 @@ from ashare_factor_research.config import ConfigBundle, load_config_bundle
 from ashare_factor_research.data.data_cleaner import add_adjusted_prices, add_forward_returns, filter_universe
 from ashare_factor_research.data.data_loader import LocalDataLoader
 from ashare_factor_research.data.provenance import verify_data_directory, write_data_manifest
+from ashare_factor_research.data.pit_audit import write_real_data_gate
+from ashare_factor_research.data.source_registry import load_source_registry, source_registry_sha256
 from ashare_factor_research.data.data_quality import (
     REAL_DATA_EXPECTED_TABLES,
     has_blocking_issues,
@@ -606,15 +608,51 @@ def run_research_pipeline(
     run_name = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path(output_root) / run_name
     figures_dir = run_dir / "figures"
+    if run_dir.exists() and any(run_dir.iterdir()):
+        raise FileExistsError(f"Run directory already exists and will not be overwritten: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
-    if mode == "real" and not (Path(data_dir) / "data_manifest.json").exists():
-        raise ValueError("Real mode requires data_manifest.json produced by import-data.")
     source_manifest = None
     if mode == "real":
-        verify_data_directory(data_dir, require_manifest=True)
-        source_manifest = json.loads((Path(data_dir) / "data_manifest.json").read_text(encoding="utf-8"))
+        manifest_path = Path(data_dir) / "data_manifest.json"
+        source_manifest = (
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest_path.exists()
+            else {
+                "mode": "real",
+                "import_gate_status": "blocked_by_missing_pit_tables",
+                "source_registry_validation": {"valid": False, "errors": ["data_manifest.json is missing"]},
+            }
+        )
+        try:
+            verify_data_directory(data_dir, require_manifest=True, expected_mode="real")
+        except (FileNotFoundError, ValueError) as exc:
+            source_manifest["_verification_error"] = str(exc)
+        if protocol:
+            registry_path = protocol.get("source_registry")
+            if not registry_path or not Path(str(registry_path)).exists():
+                source_manifest["_protocol_binding_error"] = "Protocol source_registry is missing"
+            else:
+                current_registry_hash = source_registry_sha256(load_source_registry(str(registry_path)))
+                if current_registry_hash != source_manifest.get("source_registry_sha256"):
+                    source_manifest["_protocol_binding_error"] = "Protocol source registry hash does not match imported data"
     data = LocalDataLoader(data_dir, create_if_missing=mode == "sample").load_all()
+    if mode == "real":
+        _, _, preflight_issues = write_data_quality_report(
+            data, run_dir, expected_tables=REAL_DATA_EXPECTED_TABLES
+        )
+        gate_summary = write_real_data_gate(
+            data,
+            run_dir,
+            source_manifest=source_manifest,
+            index_code=str(bundle.project.get("universe", {}).get("index_code", "000905.SH")),
+            required_start=str(protocol.get("data_start", "2015-01-01") if protocol else "2015-01-01"),
+            min_coverage=0.95,
+            quality_issues=preflight_issues,
+        )
+        if gate_summary["status"] != "passed":
+            raise ValueError(f"Real PIT data gate failed. See {run_dir / 'data_gate_summary.json'}")
+        source_manifest["data_gate_status"] = "passed"
     result = _run_pipeline_core(
         data=data,
         output_dir=figures_dir,
@@ -1048,6 +1086,8 @@ def _write_run_metadata(
         "robustness_scenario_count": int(len(result.get("robustness_summary", []))),
         "protocol_sha256": protocol.get("protocol_sha256") if protocol else None,
         "protocol_path": protocol.get("protocol_path") if protocol else None,
+        "source_registry_sha256": manifest.get("source_registry_sha256"),
+        "data_gate_status": manifest.get("data_gate_status"),
     }
     (run_dir / "run_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, default=str), encoding="utf-8"

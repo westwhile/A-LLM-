@@ -47,6 +47,8 @@ def audit_table(df: pd.DataFrame, table_name: str) -> pd.DataFrame:
     issues: list[dict[str, object]] = []
     required = REQUIRED_COLUMNS.get(table_name, [])
     primary_key = PRIMARY_KEYS.get(table_name, [])
+    if table_name == "financial_indicator" and "revision_id" in df.columns:
+        primary_key = ["ts_code", "report_period", "ann_date", "revision_id"]
     date_cols = DATE_COLUMNS.get(table_name, [])
 
     issues.append(_issue(table_name, "row_count", "info", len(df), "Rows available for audit."))
@@ -175,6 +177,16 @@ def _audit_daily_bar(df: pd.DataFrame, table_name: str) -> list[dict[str, object
         jump_count = int(jumps.gt(0.5).sum())
         if jump_count:
             issues.append(_issue(table_name, "adj_factor_jumps", "warning", jump_count, "Adjustment-factor jump exceeds 50%; verify corporate actions."))
+    if "price_adjustment" in df.columns:
+        placeholders = int(df["price_adjustment"].astype("string").eq("unadjusted_placeholder_factor").sum())
+        if placeholders:
+            issues.append(_issue(
+                table_name,
+                "placeholder_adjustment_factor",
+                "blocking",
+                placeholders,
+                "Unadjusted AkShare staging prices cannot satisfy the formal corporate-action contract.",
+            ))
     return issues
 
 

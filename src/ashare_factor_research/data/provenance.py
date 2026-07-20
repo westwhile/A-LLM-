@@ -11,7 +11,7 @@ import pandas as pd
 from ashare_factor_research.data.data_loader import LocalDataLoader
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def file_sha256(path: str | Path) -> str:
@@ -78,6 +78,8 @@ def build_data_manifest(
         ).hexdigest()
         if source_manifest
         else None,
+        "source_registry_sha256": source_manifest.get("source_registry_sha256") if source_manifest else None,
+        "data_gate_status": source_manifest.get("data_gate_status") if source_manifest else None,
     }
 
 
@@ -93,16 +95,36 @@ def write_data_manifest(
     return manifest
 
 
-def verify_data_directory(data_dir: str | Path, *, require_manifest: bool = True) -> dict[str, Any]:
+def verify_data_directory(
+    data_dir: str | Path,
+    *,
+    require_manifest: bool = True,
+    expected_mode: str | None = None,
+) -> dict[str, Any]:
     root = Path(data_dir)
     manifest_path = root / "data_manifest.json"
     if require_manifest and not manifest_path.exists():
         raise FileNotFoundError(f"Missing data manifest: {manifest_path}")
     source_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else None
+    if expected_mode and source_manifest and source_manifest.get("mode") != expected_mode:
+        raise ValueError(f"Data manifest mode must be {expected_mode}")
+    strict_real = bool(source_manifest and (expected_mode == "real" or (expected_mode is None and source_manifest.get("mode") == "real")))
+    if strict_real and source_manifest:
+        if int(source_manifest.get("manifest_version", 0)) < 2:
+            raise ValueError("Real data manifest must use manifest_version 2 or newer")
+        if source_manifest.get("mode") != "real":
+            raise ValueError("Real data manifest mode must be real")
+        if source_manifest.get("import_gate_status") != "ready_for_quality_audit":
+            raise ValueError("Real data import gate is not ready_for_quality_audit")
+        if not source_manifest.get("source_registry_sha256"):
+            raise ValueError("Real data manifest is missing source_registry_sha256")
+        if not source_manifest.get("source_registry_validation", {}).get("valid", False):
+            raise ValueError("Real data source registry is not approved")
     tables = LocalDataLoader(root, create_if_missing=False).load_all()
     if not tables:
         raise ValueError(f"No standardized tables found in {root}")
-    current = build_data_manifest(tables, mode="real" if require_manifest else "sample", source_manifest=source_manifest)
+    current_mode = expected_mode or (source_manifest.get("mode") if source_manifest else None) or ("real" if require_manifest else "sample")
+    current = build_data_manifest(tables, mode=current_mode, source_manifest=source_manifest)
     mismatches: list[str] = []
     if source_manifest:
         for name, metadata in source_manifest.get("tables", {}).items():

@@ -208,6 +208,8 @@ tempCodeRunnerFile.py
 
 # Local data fetches and generated run artifacts
 data/raw/
+data/staging/
+data/standard/
 outputs/
 tmp/
 *.baiduyun.uploading.cfg

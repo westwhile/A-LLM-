@@ -18,3 +18,19 @@ model_selection: "net-of-cost economic gate + Diebold-Mariano audit + multiple-t
 cost_scenarios: [zero, standard, high]
 frozen_after: "before any real out-of-sample test run"
 llm_role: extension_only_until_authorized_text_timestamps_and_human_review_pass
+data_start: "2015-01-01"
+evaluation_start: "2018-01-01"
+final_holdout_start: "2024-01-01"
+frequency: monthly
+forecast_horizon_months: 1
+minimum_oos_months: 36
+experiment_registry_path: experiment_registry.csv
+source_registry: data_source_registry.yaml
+model_registry:
+  factor_timing: [static_equal, rolling_ic_12m, rolling_ic_24m, ewma_ic, kalman_local_level]
+  regime: [no_regime, rule_based, hmm_2_state, hmm_3_state]
+  volatility: [no_scaling, historical_vol, ewma, gjr_garch]
+selection:
+  primary_metric: net_information_ratio
+  prediction_tests: [dm, spa]
+  overfit_tests: [dsr, pbo]

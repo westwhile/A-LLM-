@@ -219,22 +219,39 @@ def gjr_garch_forecast(values: pd.Series | np.ndarray) -> dict[str, float | int 
     }
 
 
+def rolling_mean_forecast(train: pd.Series, window: int) -> float:
+    """Mean of the most recent ``window`` observations."""
+
+    clean = train.dropna().astype(float)
+    if clean.empty:
+        return np.nan
+    return float(clean.tail(window).mean())
+
+
 def expanding_forecast_comparison(
     series: pd.Series,
     *,
     min_train: int = 12,
     ewma_alpha: float = 0.2,
     exogenous: pd.DataFrame | None = None,
+    target_series: str = "target",
+    trade_dates: pd.DatetimeIndex | None = None,
 ) -> pd.DataFrame:
-    """Compare one-step naive, mean, EWMA and ARIMA(1,0,0)-equivalent forecasts."""
+    """Compare one-step naive, mean, rolling means, EWMA and ARIMA(1,0,0)-equivalent forecasts."""
 
     clean = series.dropna().astype(float).sort_index()
+    if exogenous is not None and exogenous.shape[1] > 4:
+        raise ValueError("ARIMAX accepts at most four preregistered economic variables")
     exog = exogenous.reindex(clean.index).astype(float).ffill() if exogenous is not None else None
     rows: list[dict[str, object]] = []
     for idx in range(max(int(min_train), 3), len(clean)):
         train = clean.iloc[:idx]
         actual = float(clean.iloc[idx])
         target_date = clean.index[idx]
+        forecast_origin = train.index[-1]
+        # A monthly realized target is observable at its target timestamp.  It
+        # must never enter the training set at the preceding forecast origin.
+        availability_date = pd.Timestamp(target_date)
         x = train.to_numpy()[:-1]
         y = train.to_numpy()[1:]
         if len(x) >= 2 and float(np.var(x)) > 1e-12:
@@ -244,10 +261,12 @@ def expanding_forecast_comparison(
         else:
             ar1 = float(train.mean())
         forecasts = {
-            "naive_last": float(train.iloc[-1]),
+            "lag_1": float(train.iloc[-1]),
             "historical_mean": float(train.mean()),
+            "rolling_12m_mean": rolling_mean_forecast(train, 12),
+            "rolling_24m_mean": rolling_mean_forecast(train, 24),
             "ewma": float(train.ewm(alpha=ewma_alpha, adjust=False).mean().iloc[-1]),
-            "arima_1_0_0": ar1,
+            "ar_1": ar1,
         }
         if exog is not None and idx >= 4:
             train_exog = exog.iloc[:idx]
@@ -271,18 +290,41 @@ def expanding_forecast_comparison(
                 forecast_row = np.r_[1.0, float(train.iloc[-1]), train_exog.iloc[-1].to_numpy(dtype=float)]
                 forecasts["arimax_1_0_0"] = float(forecast_row @ beta)
         for model, forecast in forecasts.items():
+            direction_hit = np.nan
+            if np.isfinite(forecast) and np.isfinite(actual):
+                direction_hit = int(np.sign(forecast) == np.sign(actual))
             rows.append({
+                "target_series": target_series,
+                "train_start": train.index[0],
+                "train_end": train.index[-1],
                 "training_end": train.index[-1],
+                "forecast_origin": forecast_origin,
                 "forecast_target": target_date,
+                "availability_date": availability_date,
                 "model": model,
                 "forecast": forecast,
                 "actual": actual,
                 "error": actual - forecast,
                 "squared_error": (actual - forecast) ** 2,
                 "absolute_error": abs(actual - forecast),
+                "direction_hit": direction_hit,
+                "point_in_time_valid": bool(
+                    pd.Timestamp(train.index[-1]) < pd.Timestamp(target_date)
+                    and pd.Timestamp(forecast_origin) < pd.Timestamp(availability_date)
+                ),
                 "model_version": MODEL_VERSION,
             })
     return pd.DataFrame(rows)
+
+
+def _next_trade_date(trade_dates: pd.DatetimeIndex, date: pd.Timestamp) -> pd.Timestamp:
+    """Return the first trade date strictly after ``date``."""
+
+    sorted_dates = pd.DatetimeIndex(pd.to_datetime(trade_dates)).sort_values().unique()
+    idx = sorted_dates.searchsorted(pd.Timestamp(date), side="right")
+    if idx >= len(sorted_dates):
+        return pd.Timestamp(date) + pd.Timedelta(days=1)
+    return pd.Timestamp(sorted_dates[idx])
 
 
 def diebold_mariano_test(

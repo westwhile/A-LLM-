@@ -1,0 +1,14 @@
+experiment_id,module,model,parameters,status,registered_at,notes
+FT-STATIC-001,factor_timing,static_equal,"{}",preregistered,2026-07-19,control
+FT-RIC12-001,factor_timing,rolling_ic_12m,"{window_months: 12}",preregistered,2026-07-19,rolling baseline
+FT-RIC24-001,factor_timing,rolling_ic_24m,"{window_months: 24}",preregistered,2026-07-19,rolling baseline
+FT-EWMA-001,factor_timing,ewma_ic,"{alpha: project_config}",preregistered,2026-07-19,simple adaptive baseline
+FT-KALMAN-001,factor_timing,kalman_local_level,"{variances: project_config}",preregistered,2026-07-19,dynamic candidate
+RG-NONE-001,regime,no_regime,"{}",preregistered,2026-07-19,control
+RG-RULE-001,regime,rule_based,"{inputs: benchmark_return_and_volatility}",preregistered,2026-07-19,simple baseline
+RG-HMM2-001,regime,hmm_2_state,"{states: 2}",preregistered,2026-07-19,candidate
+RG-HMM3-001,regime,hmm_3_state,"{states: 3}",preregistered,2026-07-19,candidate
+VL-NONE-001,volatility,no_scaling,"{}",preregistered,2026-07-19,control
+VL-HIST-001,volatility,historical_vol,"{window: project_config}",preregistered,2026-07-19,simple baseline
+VL-EWMA-001,volatility,ewma,"{alpha: project_config}",preregistered,2026-07-19,simple baseline
+VL-GJR-001,volatility,gjr_garch,"{target: project_config}",preregistered,2026-07-19,dynamic candidate

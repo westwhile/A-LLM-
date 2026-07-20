@@ -83,7 +83,7 @@ TABLE_SCHEMAS: dict[str, TableSchema] = {
             "profit_yoy",
         ),
         primary_key=("ts_code", "report_period", "ann_date"),
-        date_columns=("report_period", "ann_date", "usable_date"),
+        date_columns=("report_period", "ann_date", "usable_date", "revision_date"),
         grain="one row per stock financial report announcement",
     ),
     "suspension": TableSchema(

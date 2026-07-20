@@ -104,11 +104,11 @@ python -m ashare_factor_research.main version
 
 ```powershell
 python -m ashare_factor_research.main fetch-data `
-  --start-date 2024-01-01 `
-  --end-date 2024-03-31 `
-  --symbols 000001.SZ,600000.SH `
+  --start-date 2015-01-01 `
+  --symbols-file data/import/reviewed_symbols.csv `
   --tables trade_calendar,stock_basic,daily_bar,benchmark_index `
-  --output-dir data/raw/smoke `
+  --output-dir data/raw `
+  --batch-id akshare-2015-v1 `
   --format csv
 ```
 
@@ -118,12 +118,14 @@ python -m ashare_factor_research.main fetch-data `
 
 ```powershell
 python -m ashare_factor_research.main import-data `
+  --mode real `
+  --source-registry config/data_source_registry.yaml `
   --source-dir data/import/incoming `
   --output-dir data/standard/real-v1 `
   --format parquet
 ```
 
-可通过 `--mapping <yaml>` 提供分表字段映射。导入过程会转换日期、验证 schema 与主键、写入标准表，并登记源文件 SHA-256、字段类型、行数和日期范围。
+可通过 `--mapping <yaml>` 提供分表字段映射。真实导入要求每张表的来源、许可、PIT 语义、历史起点、单位和审查证据均已登记；默认来源登记保持 `pending_user_review`，因此不会误解锁真实研究。manifest v2 会绑定来源登记 SHA-256、源文件 SHA-256、字段类型、行数和日期范围。
 
 ### 3. 验证数据与执行质量阻断
 
@@ -143,12 +145,12 @@ python -m ashare_factor_research.main verify-data `
 
 ```powershell
 python -m ashare_factor_research.main run-research `
-  --protocol config/research_protocol.real.example.yaml `
-  --run-id real-v1 `
+  --protocol config/research_protocol.real.yaml `
+  --run-id real-baseline-YYYYMMDD `
   --robustness
 ```
 
-真实模式会对缺表、重复主键、PIT 错误、价格异常、跨表日期不一致、基准覆盖不足和无法形成样本外评分等问题执行阻断。
+真实模式会先生成 `data_gate_summary.json`、PIT/修订/幸存者/覆盖率/基准对齐五类 CSV；缺表、未批准来源、未来修订、当前成分回填、覆盖率低于 95%、基准错位或 manifest/hash 异常都会在模型运行前阻断。AkShare 日行情中的占位复权因子只允许进入原始暂存区，不能直接通过正式门禁。
 
 ## 配置体系
 
@@ -157,6 +159,9 @@ python -m ashare_factor_research.main run-research `
 | `config/project_config.yaml` | 市场、基准、研究区间、股票池、信号/执行时点、walk-forward 和 LLM 审计规则 |
 | `config/factor_config.yaml` | 启用因子、处理参数、覆盖率阈值和中性化设置 |
 | `config/backtest_config.yaml` | TopN、权重与行业约束、交易成本、执行限制和稳健性情景 |
+| `config/research_protocol.real.yaml` | 2015/2018/2024 时间切分、候选模型、统计检验和最终留出期冻结 |
+| `config/data_source_registry.yaml` | 分表数据来源、许可、PIT、单位和审查证据；默认待用户审查 |
+| `config/experiment_registry.csv` | 预注册模型与唯一 `experiment_id` |
 
 CLI 参数可覆盖关键组合参数，但每次标准运行都会保存三份完整配置快照，便于复现和审计。
 
@@ -219,6 +224,16 @@ outputs/runs/<run_id>/
 - 回测成本、滑点和冲击参数属于研究假设，不能替代真实成交验证。
 
 ## 工程质量
+
+阶段 2–3 提供两个独立入口。月度样本固定为月末收盘信号、下一交易日开盘执行、相邻月末结束标签；真实模式还要求完整 PIT 表、全局人工签署、非空专项审计及历史成员字段覆盖率不少于 95%。
+
+```powershell
+$env:PYTHONPATH="src"
+python -m ashare_factor_research.main build-monthly-sample --mode sample --data-dir data/sample --output-dir outputs/monthly/sample
+python -m ashare_factor_research.main run-time-series-baselines --monthly-ic outputs/monthly/sample/monthly_factor_ic.csv --monthly-returns outputs/monthly/sample/monthly_factor_returns.csv --state-variables outputs/monthly/sample/monthly_state_variables.csv --output-dir outputs/baselines/sample
+```
+
+`run-time-series-baselines` 默认只评估 2018–2023；2024-01-01 起的最终留出期不会进入训练、模型选择或晋级结论。Kalman、HMM 和 GARCH/DCC 仍属于后续阶段候选，不由本命令给出晋级结论。
 
 统一质量门禁包含源码编译、单元测试、CLI smoke 和 Notebook smoke：
 

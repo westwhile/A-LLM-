@@ -39,7 +39,9 @@ class ImprovementPlanTest(unittest.TestCase):
             self.assertTrue((output / "data_manifest.json").exists())
             self.assertIn("daily_bar", manifest["tables"])
             loaded = json.loads((output / "data_manifest.json").read_text(encoding="utf-8"))
-            self.assertEqual(loaded["manifest_version"], 1)
+            self.assertEqual(loaded["manifest_version"], 2)
+            self.assertEqual(loaded["mode"], "sample")
+            self.assertIsNone(loaded["source_registry_sha256"])
 
     def test_cross_table_audit_blocks_overlapping_membership(self):
         members = pd.DataFrame({
@@ -98,8 +100,13 @@ class ImprovementPlanTest(unittest.TestCase):
 
     def test_real_pipeline_requires_import_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ValueError, "data_manifest"):
-                run_research_pipeline(data_dir=tmp, output_root=Path(tmp) / "runs", mode="real")
+            output_root = Path(tmp) / "runs"
+            with self.assertRaisesRegex(ValueError, "Real PIT data gate failed"):
+                run_research_pipeline(data_dir=tmp, output_root=output_root, mode="real", run_id="blocked")
+            summary_path = output_root / "blocked" / "data_gate_summary.json"
+            self.assertTrue(summary_path.exists())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "blocked_by_missing_pit_tables")
 
     def test_walk_forward_uses_only_lagged_windows(self):
         dates = pd.date_range("2021-01-31", periods=10, freq="ME")

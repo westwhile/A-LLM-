@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 from pathlib import Path
 import time
 from typing import Protocol
@@ -24,6 +25,13 @@ STANDARD_TABLES = [
     "benchmark_index",
     "news_event",
 ]
+
+AKSHARE_TABLE_ENDPOINTS = {
+    "trade_calendar": "tool_trade_date_hist_sina",
+    "stock_basic": "stock_info_a_code_name",
+    "daily_bar": "stock_zh_a_hist (fallback stock_zh_a_daily)",
+    "benchmark_index": "stock_zh_index_daily_em (fallback stock_zh_index_daily)",
+}
 
 
 class MarketDataProvider(Protocol):
@@ -68,6 +76,12 @@ class AkShareProvider:
                 "or use local standardized data files."
             ) from exc
         return ak
+
+    def provider_version(self) -> str:
+        try:
+            return importlib.metadata.version("akshare")
+        except importlib.metadata.PackageNotFoundError:
+            return str(getattr(self._akshare(), "__version__", "unknown"))
 
     @staticmethod
     def _date_arg(date: str | None) -> str | None:
@@ -200,6 +214,7 @@ class AkShareProvider:
                     "volume": pd.to_numeric(raw[volume_col], errors="coerce"),
                     "amount": pd.to_numeric(raw[amount_col], errors="coerce"),
                     "adj_factor": 1.0,
+                    "price_adjustment": "unadjusted_placeholder_factor",
                 }
             )
             rows.append(mapped)
@@ -212,7 +227,9 @@ class AkShareProvider:
         index_code = self.index_code.split(".")[0]
         raw = pd.DataFrame()
         if hasattr(ak, "stock_zh_index_daily_em"):
-            raw = self._call_with_retry("stock_zh_index_daily_em", ak.stock_zh_index_daily_em, symbol=index_code)
+            raw = self._call_with_retry(
+                "stock_zh_index_daily_em", ak.stock_zh_index_daily_em, symbol=f"csi{index_code}"
+            )
         if raw.empty and hasattr(ak, "stock_zh_index_daily"):
             raw = self._call_with_retry(
                 "stock_zh_index_daily",
@@ -273,7 +290,11 @@ class LocalDataLoader:
                 "trade_date",
                 "ann_date",
                 "usable_date",
+                "revision_date",
+                "revision_time",
+                "update_time",
                 "publish_date",
+                "publish_time",
                 "report_period",
                 "list_date",
                 "delist_date",

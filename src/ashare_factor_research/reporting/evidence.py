@@ -15,6 +15,19 @@ DEFAULT_CLAIMS = [
     {"claim_id": "time_series_point_in_time", "status": "conditional_on_history", "evidence": ["figures/dynamic_factor_weights.csv", "figures/regime_probabilities.csv", "figures/model_selection_audit.csv", "figures/time_series_report.md"]},
 ]
 
+REAL_DATA_GATE_CLAIM = {
+    "claim_id": "real_pit_data_gate",
+    "status": "supported_only_when_gate_passed",
+    "evidence": [
+        "data_gate_summary.json",
+        "pit_timing_audit.csv",
+        "financial_revision_audit.csv",
+        "survivorship_audit.csv",
+        "universe_coverage.csv",
+        "benchmark_alignment.csv",
+    ],
+}
+
 
 def write_evidence_manifest(
     run_dir: str | Path,
@@ -24,7 +37,10 @@ def write_evidence_manifest(
 ) -> Path:
     root = Path(run_dir)
     resolved = []
-    for claim in claims or DEFAULT_CLAIMS:
+    selected_claims = list(claims or DEFAULT_CLAIMS)
+    if claims is None and run_metadata.get("mode") == "real":
+        selected_claims.append(REAL_DATA_GATE_CLAIM)
+    for claim in selected_claims:
         paths = [str(path) for path in claim["evidence"]]
         resolved.append({**claim, "evidence": paths, "all_present": all((root / path).exists() for path in paths)})
     payload = {
@@ -35,6 +51,8 @@ def write_evidence_manifest(
         "source_tree_sha256": run_metadata.get("source_tree_sha256"),
         "data_version": run_metadata.get("data_version"),
         "protocol_sha256": run_metadata.get("protocol_sha256"),
+        "source_registry_sha256": run_metadata.get("source_registry_sha256"),
+        "data_gate_status": run_metadata.get("data_gate_status"),
         "claims": resolved,
     }
     path = root / "evidence_manifest.json"

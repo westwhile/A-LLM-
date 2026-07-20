@@ -1,0 +1,31 @@
+table,check,severity,value,detail
+trade_calendar,row_count,info,3048,Rows available for audit.
+trade_calendar,primary_key_duplicates,ok,0,Primary key: ['trade_date'].
+trade_calendar,date_range:trade_date,info,2014-01-02..2026-07-17,Observed date range.
+stock_basic,row_count,info,5533,Rows available for audit.
+stock_basic,primary_key_duplicates,ok,0,Primary key: ['ts_code'].
+stock_basic,date_range:list_date,info,1990-12-01..2026-07-10,Observed date range.
+stock_basic,date_range:delist_date,info,1999-07-12..2026-07-17,Observed date range.
+stock_basic,asset_count,info,5533,Unique stock count by ts_code.
+daily_bar,row_count,info,1663139,Rows available for audit.
+daily_bar,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'ts_code']."
+daily_bar,missing_rate:amount,warning,0.284061,Missing values in required field.
+daily_bar,missing_rate:adj_factor,warning,0.000834,Missing values in required field.
+daily_bar,date_range:trade_date,info,2014-01-02..2026-07-17,Observed date range.
+daily_bar,asset_count,info,753,Unique stock count by ts_code.
+daily_bar,zero_amount,warning,2,Zero turnover requires suspension/stale-price review.
+daily_bar,amount_spikes,warning,464,Absolute day-on-day amount change exceeds 2000%.
+daily_bar,adj_factor_jumps,warning,429,Adjustment-factor jump exceeds 50%; verify corporate actions.
+benchmark_index,row_count,info,3048,Rows available for audit.
+benchmark_index,primary_key_duplicates,ok,0,"Primary key: ['trade_date', 'index_code']."
+benchmark_index,date_range:trade_date,info,2014-01-02..2026-07-17,Observed date range.
+daily_basic,missing_table,blocking,daily_basic,Expected standardized table is not present.
+financial_indicator,missing_table,blocking,financial_indicator,Expected standardized table is not present.
+index_member,missing_table,blocking,index_member,Expected standardized table is not present.
+industry,missing_table,blocking,industry,Expected standardized table is not present.
+limit_price,missing_table,blocking,limit_price,Expected standardized table is not present.
+news_event,missing_table,warning,news_event,Expected standardized table is not present.
+st_status,missing_table,blocking,st_status,Expected standardized table is not present.
+suspension,missing_table,blocking,suspension,Expected standardized table is not present.
+daily_bar,daily_asset_coverage_min,info,233,Minimum stocks observed on a trading date.
+daily_bar,dates_outside_trade_calendar,ok,0,Daily bars must fall on open trading days.

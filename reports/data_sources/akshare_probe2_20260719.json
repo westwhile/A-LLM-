@@ -1,0 +1,154 @@
+{
+  "sw_industry_hist": {
+    "error": "SSLError: HTTPSConnectionPool(host='www.swsresearch.com', port=443): Max retries exceeded with url: /swindex/pdf/SwClass2021/StockClassifyUse_stock.xls (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1010)')))"
+  },
+  "sz_name_change_full": {
+    "rows": 1756,
+    "columns": [
+      "变更日期",
+      "证券代码",
+      "证券简称",
+      "变更前全称",
+      "变更后全称"
+    ],
+    "dates": {
+      "变更日期": [
+        "1992-02-28",
+        "2026-07-13"
+      ]
+    },
+    "head": [
+      {
+        "变更日期": "1992-02-28",
+        "证券代码": "000004",
+        "证券简称": "国华退",
+        "变更前全称": "蛇口安达运输股份有限公司",
+        "变更后全称": "深圳市蛇口安达实业股份有限公司"
+      },
+      {
+        "变更日期": "1993-03-08",
+        "证券代码": "200012",
+        "证券简称": "南  玻Ｂ",
+        "变更前全称": "中国南方玻璃股份有限公司",
+        "变更后全称": "中国南玻集团股份有限公司"
+      }
+    ]
+  },
+  "sz_name_change_abbr": {
+    "rows": 7445,
+    "columns": [
+      "变更日期",
+      "证券代码",
+      "证券简称",
+      "变更前简称",
+      "变更后简称"
+    ],
+    "dates": {
+      "变更日期": [
+        "1994-01-03",
+        "2026-07-17"
+      ]
+    },
+    "head": [
+      {
+        "变更日期": "1994-01-03",
+        "证券代码": "000005",
+        "证券简称": "ST星源",
+        "变更前简称": "深原野Ａ",
+        "变更后简称": "深星源Ａ"
+      },
+      {
+        "变更日期": "1994-11-01",
+        "证券代码": "000503",
+        "证券简称": "国新健康",
+        "变更前简称": "琼化纤",
+        "变更后简称": "琼海虹"
+      }
+    ]
+  },
+  "valuation_baidu_600000": {
+    "rows": 731,
+    "columns": [
+      "date",
+      "value"
+    ],
+    "dates": {
+      "date": [
+        "2016-07-20",
+        "2026-07-18"
+      ],
+      "value": [
+        "1970-01-01",
+        "1970-01-01"
+      ]
+    },
+    "head": [
+      {
+        "date": "2016-07-20",
+        "value": "3404.88"
+      },
+      {
+        "date": "2016-07-25",
+        "value": "3391.91"
+      }
+    ]
+  },
+  "benchmark_sina_000905": {
+    "rows": 5230,
+    "columns": [
+      "date",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ],
+    "dates": {
+      "date": [
+        "2005-01-04",
+        "2026-07-17"
+      ],
+      "open": [
+        "1970-01-01",
+        "1970-01-01"
+      ],
+      "high": [
+        "1970-01-01",
+        "1970-01-01"
+      ],
+      "low": [
+        "1970-01-01",
+        "1970-01-01"
+      ],
+      "close": [
+        "1970-01-01",
+        "1970-01-01"
+      ],
+      "volume": [
+        "1970-01-01",
+        "1970-01-01"
+      ]
+    },
+    "head": [
+      {
+        "date": "2005-01-04",
+        "open": "996.682",
+        "high": "996.682",
+        "low": "984.795",
+        "close": "986.927",
+        "volume": "232376203"
+      },
+      {
+        "date": "2005-01-05",
+        "open": "986.57",
+        "high": "1008.855",
+        "low": "985.677",
+        "close": "1003.633",
+        "volume": "348610113"
+      }
+    ]
+  },
+  "benchmark_em_retry": {
+    "error": "ProxyError: HTTPSConnectionPool(host='push2his.eastmoney.com', port=443): Max retries exceeded with url: /api/qt/stock/kline/get?secid=2.000905&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&klt=101&fqt=0&beg=19900101&end=20500101 (Caused by ProxyError('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response')))"
+  }
+}

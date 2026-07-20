@@ -1,0 +1,120 @@
+{
+  "sina_qfq_factor_600000": {
+    "rows": 29,
+    "columns": [
+      "date",
+      "qfq_factor"
+    ],
+    "dates": {
+      "date": [
+        "1900-01-01",
+        "2026-07-16"
+      ]
+    },
+    "head": [
+      {
+        "date": "2026-07-16",
+        "qfq_factor": "1.0000000000000000"
+      },
+      {
+        "date": "2025-07-16",
+        "qfq_factor": "1.0472440944882000"
+      },
+      {
+        "date": "2024-07-18",
+        "qfq_factor": "1.0790022364068000"
+      }
+    ],
+    "tail": [
+      {
+        "date": "1999-11-10",
+        "qfq_factor": "17.3916341988312000"
+      },
+      {
+        "date": "1900-01-01",
+        "qfq_factor": "17.3916341988312000"
+      }
+    ]
+  },
+  "em_raw_units_600000": {
+    "error": "ProxyError: HTTPSConnectionPool(host='push2his.eastmoney.com', port=443): Max retries exceeded with url: /api/qt/stock/kline/get?fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58%2Cf59%2Cf60%2Cf61%2Cf116&ut=7eea3edcaed734bea9cbfc24409ed989&klt=101&fqt=0&secid=1.600000&beg=20260701&end=20260719 (Caused by ProxyError('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response')))"
+  },
+  "baidu_val_pe_all": {
+    "rows": 610,
+    "columns": [
+      "date",
+      "value"
+    ],
+    "dates": {
+      "date": [
+        "1999-11-13",
+        "2026-07-18"
+      ],
+      "value": [
+        "1970-01-01",
+        "1970-01-01"
+      ]
+    },
+    "head": [
+      {
+        "date": "1999-11-13",
+        "value": "78.66"
+      },
+      {
+        "date": "1999-11-29",
+        "value": "73.83"
+      },
+      {
+        "date": "1999-12-15",
+        "value": "74.17"
+      }
+    ],
+    "tail": [
+      {
+        "date": "2026-07-02",
+        "value": "5.76"
+      },
+      {
+        "date": "2026-07-18",
+        "value": "5.88"
+      }
+    ]
+  },
+  "sse_name_change_st_600654": {
+    "rows": 11,
+    "columns": [
+      "index",
+      "name"
+    ],
+    "dates": {
+      "index": [
+        "1970-01-01",
+        "1970-01-01"
+      ]
+    },
+    "head": [
+      {
+        "index": "1",
+        "name": "G飞乐"
+      },
+      {
+        "index": "2",
+        "name": "飞乐股份"
+      },
+      {
+        "index": "3",
+        "name": "中安消"
+      }
+    ],
+    "tail": [
+      {
+        "index": "10",
+        "name": "中安消"
+      },
+      {
+        "index": "11",
+        "name": "中安科"
+      }
+    ]
+  }
+}
