@@ -29,7 +29,7 @@ source_registry: data_source_registry.yaml
 model_registry:
   factor_timing: [static_equal, rolling_ic_12m, rolling_ic_24m, ewma_ic, kalman_local_level]
   regime: [no_regime, rule_based, hmm_2_state, hmm_3_state]
-  volatility: [no_scaling, historical_vol, ewma, gjr_garch]
+  volatility: [no_scaling, historical_vol_20, historical_vol_60, ewma, garch, gjr_garch, egarch]
 selection:
   primary_metric: net_information_ratio
   prediction_tests: [dm, spa]

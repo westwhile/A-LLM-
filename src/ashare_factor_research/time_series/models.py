@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 
-MODEL_VERSION = "time-series-v1"
+MODEL_VERSION = "time-series-v2"
 
 
 @dataclass(frozen=True)
@@ -57,12 +57,19 @@ class GaussianHMM:
     deliberately returns forward probabilities and never smoothed probabilities.
     """
 
-    def __init__(self, n_states: int = 3, max_iter: int = 50, tolerance: float = 1e-5) -> None:
+    def __init__(
+        self,
+        n_states: int = 3,
+        max_iter: int = 50,
+        tolerance: float = 1e-5,
+        random_state: int = 0,
+    ) -> None:
         if n_states < 2:
             raise ValueError("n_states must be at least 2")
         self.n_states = int(n_states)
         self.max_iter = int(max_iter)
         self.tolerance = float(tolerance)
+        self.random_state = int(random_state)
         self.initial_: np.ndarray | None = None
         self.transition_: np.ndarray | None = None
         self.means_: np.ndarray | None = None
@@ -119,6 +126,9 @@ class GaussianHMM:
         order = np.argsort(data[:, 0])
         partitions = np.array_split(order, self.n_states)
         self.means_ = np.vstack([data[idx].mean(axis=0) for idx in partitions])
+        if self.random_state:
+            rng = np.random.default_rng(self.random_state)
+            self.means_ += rng.normal(0.0, 0.03, self.means_.shape)
         self.variances_ = np.vstack([np.maximum(data[idx].var(axis=0), 0.1) for idx in partitions])
         self.initial_ = np.full(self.n_states, 1.0 / self.n_states)
         self.transition_ = np.full((self.n_states, self.n_states), 0.1 / max(self.n_states - 1, 1))

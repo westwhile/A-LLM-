@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import sqrt
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,7 @@ from ashare_factor_research.time_series.models import (
     kalman_local_level,
     superior_predictive_ability_test,
 )
+from ashare_factor_research.time_series.stage46 import SCHEMAS as STAGE46_SCHEMAS, run_stage46_models
 from ashare_factor_research.utils.helpers import require_columns
 
 
@@ -35,6 +37,19 @@ OUTPUT_NAMES = (
     "monthly_factor_returns",
     "dynamic_covariance",
     "exposure_scalars",
+    "kalman_trial_registry",
+    "factor_ic_forecasts",
+    "factor_weight_turnover",
+    "factor_weight_stability",
+    "factor_timing_comparison",
+    "regime_transition_matrix",
+    "regime_durations",
+    "regime_factor_performance",
+    "regime_stability",
+    "volatility_model_comparison",
+    "model_warnings",
+    "dcc_risk_contributions",
+    "stage46_status",
 )
 
 EMPTY_SCHEMAS = {
@@ -59,6 +74,7 @@ EMPTY_SCHEMAS = {
     "exposure_scalars": ["trade_date", "exposure_scalar", "model_version"],
     "economic_comparison": ["scheme", "signal_date", "availability_date", "gross_return", "cost", "net_return", "turnover"],
 }
+EMPTY_SCHEMAS.update(STAGE46_SCHEMAS)
 
 
 @dataclass(frozen=True)
@@ -70,7 +86,7 @@ class TimeSeriesResearchResult:
 
 def _rank_correlation(part: pd.DataFrame, factor: str, return_col: str) -> float:
     use = part[[factor, return_col]].dropna()
-    if len(use) < 3:
+    if len(use) < 3 or use[factor].nunique() < 2 or use[return_col].nunique() < 2:
         return np.nan
     return float(use[factor].rank(method="average").corr(use[return_col].rank(method="average")))
 
@@ -469,13 +485,24 @@ def _diagnostic_rows(series_name: str, series: pd.Series, max_lag: int) -> list[
         from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
         from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf, zivot_andrews
 
-        adf = adfuller(clean.to_numpy(), autolag="AIC")
-        kpss_result = kpss(clean.to_numpy(), regression="c", nlags="auto")
-        lb = acorr_ljungbox(clean.to_numpy(), lags=[min(max_lag, len(clean) // 4)], return_df=True).iloc[-1]
-        arch = het_arch(clean.to_numpy(), nlags=min(max_lag, max(1, len(clean) // 5)))
-        za = zivot_andrews(clean.to_numpy(), regression="c", autolag="AIC")
-        acf_values = acf(clean.to_numpy(), nlags=min(max_lag, len(clean) // 4), fft=False)
-        pacf_values = pacf(clean.to_numpy(), nlags=min(max_lag, len(clean) // 4), method="ywm")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            adf = adfuller(clean.to_numpy(), autolag="AIC")
+            kpss_result = kpss(clean.to_numpy(), regression="c", nlags="auto")
+            lb = acorr_ljungbox(clean.to_numpy(), lags=[min(max_lag, len(clean) // 4)], return_df=True).iloc[-1]
+            arch = het_arch(clean.to_numpy(), nlags=min(max_lag, max(1, len(clean) // 5)))
+            za = zivot_andrews(clean.to_numpy(), regression="c", autolag="AIC")
+            acf_values = acf(clean.to_numpy(), nlags=min(max_lag, len(clean) // 4), fft=False)
+            pacf_values = pacf(clean.to_numpy(), nlags=min(max_lag, len(clean) // 4), method="ywm")
+        for item in caught:
+            category = item.category.__name__
+            if category not in {"InterpolationWarning", "RuntimeWarning"}:
+                raise RuntimeError(f"unexpected diagnostic warning {category}: {item.message}")
+            rows.append({
+                "series": series_name, "test": f"warning:{category}", "statistic": np.nan,
+                "p_value": np.nan, "observations": int(len(clean)), "status": "expected_warning",
+                "detail": str(item.message)[:500], "model_version": MODEL_VERSION,
+            })
         tests = [
             ("adf", adf[0], adf[1], "unit-root null"),
             ("kpss", kpss_result[0], kpss_result[1], "stationarity null"),
@@ -762,10 +789,20 @@ def build_exposure_scalars(
     for date in dates:
         risk_multiplier = 1.0
         regime_row = regime[regime.get("as_of_date", pd.Series(dtype="datetime64[ns]")).eq(date)]
+        preferred_regime = regime_row[
+            regime_row.get("model", pd.Series(index=regime_row.index, dtype=object)).eq("hmm_3_state")
+        ]
+        if not preferred_regime.empty:
+            regime_row = preferred_regime
         if not regime_row.empty and regime_row.iloc[0].get("status") == "ok":
-            bear_probability = float(regime_row.iloc[0].get("state_0_probability", 0.0))
+            bear_probability = float(
+                regime_row.iloc[0].get("bear_probability", regime_row.iloc[0].get("state_0_probability", 0.0))
+            )
             risk_multiplier *= 1.0 - (1.0 - min_exposure) * bear_probability
         vol_row = volatility[volatility.get("as_of_date", pd.Series(dtype="datetime64[ns]")).eq(date)]
+        preferred = vol_row[vol_row.get("model", pd.Series(index=vol_row.index, dtype=object)).eq("gjr_garch")]
+        if not preferred.empty:
+            vol_row = preferred
         if not vol_row.empty and vol_row.iloc[0].get("status") == "ok":
             forecast = float(vol_row.iloc[0].get("annualized_volatility_forecast", np.nan))
             if np.isfinite(forecast) and forecast > 0:
@@ -1132,34 +1169,31 @@ def run_time_series_research(
     diagnostics = build_time_series_diagnostics(
         standard, monthly_ic, max_lag=int(diagnostics_cfg.get("max_lag", 12))
     )
-    regime_cfg = cfg.get("regime", {})
-    regime = build_regime_probabilities(
-        standard,
-        rebalance_dates,
-        n_states=int(regime_cfg.get("states", 3)),
-        min_observations=int(regime_cfg.get("min_observations", 36)),
-        max_iterations=int(regime_cfg.get("max_iterations", 50)),
-    )
-    weight_cfg = cfg.get("dynamic_weights", {})
-    weights = build_dynamic_factor_weights(
+    stage_frames = run_stage46_models(
         monthly_ic,
-        rebalance_dates,
-        min_observations=int(weight_cfg.get("min_observations", 12)),
-        min_asset_count=int(weight_cfg.get("min_asset_count", 30)),
-        max_factors=int(weight_cfg.get("max_factors", 10)),
-        max_factor_weight=float(weight_cfg.get("max_factor_weight", 0.20)),
-        max_fdr_q_value=float(weight_cfg.get("max_fdr_q_value", 0.05)),
-        process_variance=float(weight_cfg.get("process_variance", 0.001)),
-        observation_variance=float(weight_cfg.get("observation_variance", 0.01)),
-        turnover_penalty=float(weight_cfg.get("turnover_penalty", 0.20)),
-    )
-    dynamic_scores = build_dynamic_scores(panel, weights)
-    volatility_cfg = cfg.get("volatility", {})
-    volatility = build_volatility_forecasts(
+        monthly_returns,
+        standard,
         benchmark_return,
-        rebalance_dates,
-        min_observations=int(volatility_cfg.get("min_observations", 60)),
+        config=cfg,
+        rebalance_dates=rebalance_dates,
+        final_holdout_start=cfg.get("final_holdout_start", "2024-01-01"),
+        mode=str(cfg.get("mode", "sample")),
     )
+    regime = stage_frames["regime_probabilities"]
+    weight_cfg = cfg.get("dynamic_weights", {})
+    from ashare_factor_research.time_series.stage46 import _trial_id
+    primary_trial = _trial_id(
+        float(weight_cfg.get("process_variance", 0.001)),
+        float(weight_cfg.get("observation_variance", 0.01)),
+        float(weight_cfg.get("turnover_penalty", 0.20)),
+    )
+    weights = stage_frames["dynamic_factor_weights"]
+    weights = weights[weights["trial_id"].eq(primary_trial)].copy() if not weights.empty else weights
+    overall = stage_frames["stage46_status"]
+    ready = not overall.empty and bool((overall["module"].eq("overall") & overall["status"].eq("dynamic_ready")).any())
+    dynamic_scores = build_dynamic_scores(panel, weights) if ready else pd.DataFrame(columns=["trade_date", "ts_code", "score", "score_source"])
+    volatility_cfg = cfg.get("volatility", {})
+    volatility = stage_frames["volatility_forecasts"]
     forecast_cfg = cfg.get("forecast", {})
     forecast_series = standard.get("realized_volatility_20", pd.Series(dtype=float))
     monthly_forecast_series = forecast_series.resample("ME").last().dropna() if not forecast_series.empty else pd.Series(dtype=float)
@@ -1182,7 +1216,7 @@ def run_time_series_research(
         min_exposure=float(volatility_cfg.get("min_exposure", 0.90)),
         max_exposure=float(volatility_cfg.get("max_exposure", 1.0)),
     )
-    covariance = _dynamic_covariance(monthly_returns, int(weight_cfg.get("max_factors", 10)))
+    covariance = stage_frames["dynamic_covariance"]
     frames = {
         "time_series_diagnostics": diagnostics,
         "regime_probabilities": regime,
@@ -1195,10 +1229,15 @@ def run_time_series_research(
         "dynamic_covariance": covariance,
         "exposure_scalars": exposure,
     }
+    frames.update(stage_frames)
+    frames["dynamic_factor_weights"] = weights
+    frames["regime_probabilities"] = regime
+    frames["volatility_forecasts"] = volatility
+    frames["dynamic_covariance"] = covariance
     for name, columns in EMPTY_SCHEMAS.items():
         if name not in frames:
             continue
         if frames[name].empty and len(frames[name].columns) == 0:
             frames[name] = pd.DataFrame(columns=columns)
-    status = "dynamic_ready" if not dynamic_scores.empty else "insufficient_history"
+    status = "dynamic_ready" if ready and not dynamic_scores.empty else "insufficient_history"
     return TimeSeriesResearchResult(frames, dynamic_scores, status)

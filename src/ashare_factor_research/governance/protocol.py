@@ -79,5 +79,10 @@ def load_research_protocol(path: str | Path) -> dict[str, Any]:
         if not value.is_absolute():
             value = (protocol_path.parent / value).resolve()
         protocol[key] = str(value)
+    registry_path = Path(protocol["experiment_registry_path"])
+    if not registry_path.exists():
+        raise FileNotFoundError(f"Experiment registry not found: {registry_path}")
+    from ashare_factor_research.time_series.stage46 import validate_kalman_registry
+    validate_kalman_registry(pd.read_csv(registry_path))
     protocol["protocol_path"] = str(protocol_path)
     return protocol

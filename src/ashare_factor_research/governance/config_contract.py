@@ -44,6 +44,8 @@ CONSUMED_PATHS = {
     "project.time_series.min_oos_months",
     "project.time_series.diagnostics.max_lag",
     "project.time_series.regime.states",
+    "project.time_series.regime.state_counts",
+    "project.time_series.regime.initialization_seeds",
     "project.time_series.regime.min_observations",
     "project.time_series.regime.max_iterations",
     "project.time_series.dynamic_weights.min_observations",
@@ -51,17 +53,37 @@ CONSUMED_PATHS = {
     "project.time_series.dynamic_weights.max_factors",
     "project.time_series.dynamic_weights.max_factor_weight",
     "project.time_series.dynamic_weights.max_fdr_q_value",
+    "project.time_series.dynamic_weights.min_coverage",
     "project.time_series.dynamic_weights.process_variance",
     "project.time_series.dynamic_weights.observation_variance",
     "project.time_series.dynamic_weights.turnover_penalty",
+    "project.time_series.dynamic_weights.process_variance_grid",
+    "project.time_series.dynamic_weights.observation_variance_grid",
+    "project.time_series.dynamic_weights.turnover_penalty_grid",
     "project.time_series.volatility.model",
+    "project.time_series.volatility.models",
     "project.time_series.volatility.min_observations",
+    "project.time_series.volatility.ewma_lambda",
     "project.time_series.volatility.target_annual_volatility",
     "project.time_series.volatility.min_exposure",
     "project.time_series.volatility.max_exposure",
+    "project.time_series.dcc.min_factors",
+    "project.time_series.dcc.max_factors",
+    "project.time_series.dcc.alpha",
+    "project.time_series.dcc.beta",
     "project.time_series.forecast.horizon",
     "project.time_series.forecast.min_train_observations",
     "project.time_series.forecast.ewma_alpha",
+    "project.promotion.min_oos_months",
+    "project.promotion.min_incremental_annual_return",
+    "project.promotion.min_positive_year_ratio",
+    "project.promotion.min_ir_improvement",
+    "project.promotion.max_drawdown_worsening",
+    "project.promotion.dsr_min_probability",
+    "project.promotion.pbo_max",
+    "project.promotion.max_execution_violations",
+    "project.promotion.min_trial_registry_coverage",
+    "project.promotion.require_dm_or_spa",
     "project.universe.index_code",
     "project.universe.min_listed_days",
     "project.universe.exclude_st",
@@ -188,6 +210,10 @@ def validate_config_bundle(bundle: ConfigBundle, *, raise_on_error: bool = True)
             errors.append("time_series.regime.states must be 2, 3, or 4")
         if int(regime.get("min_observations", 0)) < int(regime.get("states", 3)) * 3:
             errors.append("time_series.regime.min_observations must provide at least three observations per state")
+        if tuple(regime.get("state_counts", [])) != (2, 3):
+            errors.append("time_series.regime.state_counts must be exactly [2, 3]")
+        if len(set(regime.get("initialization_seeds", []))) < 2:
+            errors.append("time_series.regime.initialization_seeds must contain at least two distinct seeds")
         if int(dynamic.get("min_observations", 0)) < 6:
             errors.append("time_series.dynamic_weights.min_observations must be at least 6")
         if int(dynamic.get("min_asset_count", 0)) < 3:
@@ -198,8 +224,20 @@ def validate_config_bundle(bundle: ConfigBundle, *, raise_on_error: bool = True)
             errors.append("time_series.dynamic_weights.max_fdr_q_value must be in (0, 1]")
         if not 0 <= float(dynamic.get("turnover_penalty", 0)) < 1:
             errors.append("time_series.dynamic_weights.turnover_penalty must be in [0, 1)")
+        expected_grids = {
+            "process_variance_grid": [0.0001, 0.001, 0.01],
+            "observation_variance_grid": [0.005, 0.01, 0.02],
+            "turnover_penalty_grid": [0.0, 0.2, 0.5],
+        }
+        for key, expected in expected_grids.items():
+            if [float(value) for value in dynamic.get(key, [])] != expected:
+                errors.append(f"time_series.dynamic_weights.{key} must match the preregistered grid {expected}")
         if volatility.get("model") != "gjr_garch":
             errors.append("time_series.volatility.model currently supports only 'gjr_garch'")
+        if tuple(volatility.get("models", [])) != ("historical_20", "historical_60", "ewma", "garch", "gjr_garch", "egarch"):
+            errors.append("time_series.volatility.models must contain the six preregistered models in order")
+        if not 0 < float(volatility.get("ewma_lambda", 0)) < 1:
+            errors.append("time_series.volatility.ewma_lambda must be in (0, 1)")
         min_exposure = float(volatility.get("min_exposure", 0))
         max_exposure = float(volatility.get("max_exposure", 0))
         if not 0 <= min_exposure <= max_exposure <= 1:
@@ -208,6 +246,11 @@ def validate_config_bundle(bundle: ConfigBundle, *, raise_on_error: bool = True)
             errors.append("time_series.forecast.horizon currently supports only one-step forecasts")
         if not 0 < float(forecast.get("ewma_alpha", 0)) <= 1:
             errors.append("time_series.forecast.ewma_alpha must be in (0, 1]")
+        dcc = time_series.get("dcc", {})
+        if int(dcc.get("min_factors", 0)) != 6 or int(dcc.get("max_factors", 0)) != 10:
+            errors.append("time_series.dcc factor bounds must be 6 and 10")
+        if float(dcc.get("alpha", -1)) < 0 or float(dcc.get("beta", -1)) < 0 or float(dcc.get("alpha", 0)) + float(dcc.get("beta", 0)) >= 1:
+            errors.append("time_series.dcc alpha and beta must be non-negative and sum to less than one")
     if bool(bundle.project.get("llm", {}).get("dry_run", True)) is False:
         errors.append("online LLM labeling is not supported; set llm.dry_run to true")
     if unconsumed:

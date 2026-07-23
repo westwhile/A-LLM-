@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import warnings
 
 import pandas as pd
 
@@ -49,6 +50,14 @@ from ashare_factor_research.time_series.research import (
     compare_preregistered_weight_schemes,
     run_time_series_baselines,
 )
+from ashare_factor_research.time_series.stage46 import run_stage46_models, validate_kalman_registry
+from ashare_factor_research.time_series.stage7 import ARTIFACT_KEYS, run_stage7_ablation
+from ashare_factor_research.time_series.stage8 import (
+    STAGE7_INPUT_KEYS,
+    run_stage8_promotion_audit,
+    synthesize_stage7_frames,
+)
+from ashare_factor_research.reporting.evidence import write_evidence_manifest
 from ashare_factor_research.utils.io import ensure_dir
 
 
@@ -387,6 +396,400 @@ def _cmd_run_time_series_baselines(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_run_time_series_models(args: argparse.Namespace) -> int:
+    out = ensure_dir(args.output_dir)
+    protocol = load_research_protocol(args.protocol)
+    if protocol["mode"] != args.mode:
+        raise ValueError(f"protocol mode {protocol['mode']} does not match --mode {args.mode}")
+    pit_gate_passed = False
+    if args.mode == "real":
+        if not args.pit_gate_summary:
+            raise ValueError("real mode requires --pit-gate-summary from the completed real data gate")
+        gate_path = Path(args.pit_gate_summary)
+        if not gate_path.exists():
+            raise FileNotFoundError(gate_path)
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        pit_gate_passed = gate.get("status") == "passed"
+        if not pit_gate_passed:
+            raise ValueError("real PIT data gate is not passed")
+    registry = pd.read_csv(args.experiment_registry)
+    validate_kalman_registry(registry)
+    bundle = load_config_bundle(args.project_config, args.factor_config, args.backtest_config)
+    validate_config_bundle(bundle)
+    explicit = [args.monthly_ic, args.monthly_returns, args.state_variables, args.benchmark_returns]
+    if any(explicit) and not all(explicit):
+        raise ValueError("monthly IC, monthly returns, state variables and benchmark returns must be supplied together")
+    input_paths: dict[str, Path] = {}
+    captured_input_warnings: list[warnings.WarningMessage] = []
+    if all(explicit):
+        input_paths = {
+            "monthly_ic": Path(args.monthly_ic),
+            "monthly_returns": Path(args.monthly_returns),
+            "state_variables": Path(args.state_variables),
+            "benchmark_returns": Path(args.benchmark_returns),
+        }
+        for name, path in input_paths.items():
+            if not path.exists():
+                raise FileNotFoundError(f"{name}: {path}")
+        monthly_ic = pd.read_csv(input_paths["monthly_ic"])
+        monthly_returns = pd.read_csv(input_paths["monthly_returns"])
+        state_variables = pd.read_csv(input_paths["state_variables"])
+        benchmark_frame = pd.read_csv(input_paths["benchmark_returns"])
+        required_benchmark = {"trade_date", "benchmark_return"}
+        if not required_benchmark.issubset(benchmark_frame.columns):
+            raise ValueError("benchmark returns require trade_date,benchmark_return")
+        benchmark_return = pd.Series(
+            pd.to_numeric(benchmark_frame["benchmark_return"], errors="coerce").to_numpy(),
+            index=pd.to_datetime(benchmark_frame["trade_date"]),
+            name="benchmark_return",
+        ).dropna()
+    else:
+        if args.mode == "real":
+            raise ValueError("real mode requires all four explicit stage-2 input artifacts")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            data = LocalDataLoader(args.data_dir, create_if_missing=True).load_all()
+            factor_panel, factor_cols = build_factor_panel(data, horizon=1, index_code="000905.SH")
+            benchmark_return = _benchmark_return_series(data, "000905.SH")
+            labels = build_monthly_labels(data["daily_bar"]["trade_date"], final_holdout_start=protocol["final_holdout_start"])
+            dates = pd.DatetimeIndex(pd.to_datetime(labels["signal_date"].unique()))
+            labeled_panel = attach_monthly_label_returns(factor_panel, data["daily_bar"], labels)
+            monthly_ic = build_monthly_factor_ic(labeled_panel, factor_cols, "monthly_forward_return", dates)
+            monthly_returns = build_monthly_factor_returns(
+                labeled_panel, factor_cols, "monthly_forward_return", dates, benchmark_return
+            )
+            state_variables = build_monthly_state_variables(
+                factor_panel, _monthly_state_market(data), benchmark_return, labels
+            )
+        for item in caught:
+            if item.category.__name__ not in {"FutureWarning", "RuntimeWarning"}:
+                raise RuntimeError(f"unexpected input warning {item.category.__name__}: {item.message}")
+        captured_input_warnings = list(caught)
+    for frame_name, frame in (("monthly_ic", monthly_ic), ("monthly_returns", monthly_returns)):
+        if not frame.empty:
+            frame["signal_date"] = pd.to_datetime(frame["signal_date"])
+            frame["availability_date"] = pd.to_datetime(frame["availability_date"])
+            if bool((frame["availability_date"] <= frame["signal_date"]).any()):
+                raise ValueError(f"{frame_name} violates label availability timing")
+    time_series_config = dict(bundle.project.get("time_series", {}))
+    time_series_config["mode"] = args.mode
+    time_series_config["pit_gate_passed"] = pit_gate_passed
+    dates = pd.DatetimeIndex(pd.to_datetime(monthly_ic.get("signal_date", pd.Series(dtype="datetime64[ns]")).dropna().unique()))
+    result = run_stage46_models(
+        monthly_ic,
+        monthly_returns,
+        state_variables,
+        benchmark_return,
+        config=time_series_config,
+        rebalance_dates=dates,
+        final_holdout_start=protocol["final_holdout_start"],
+        mode=args.mode,
+    )
+    if captured_input_warnings:
+        captured = pd.DataFrame([{
+            "module": "input_build", "as_of_date": pd.NaT, "model": "sample_builder",
+            "warning_category": item.category.__name__, "message": str(item.message)[:500],
+            "model_version": "time-series-v2",
+        } for item in captured_input_warnings])
+        result["model_warnings"] = pd.concat([result["model_warnings"], captured], ignore_index=True)
+    for name, frame in result.items():
+        frame.to_csv(out / f"{name}.csv", index=False, encoding="utf-8")
+    input_hashes = (
+        {name: file_sha256(path) for name, path in input_paths.items()}
+        if input_paths else {
+            "monthly_ic": dataframe_sha256(monthly_ic),
+            "monthly_returns": dataframe_sha256(monthly_returns),
+            "state_variables": dataframe_sha256(state_variables),
+            "benchmark_returns": dataframe_sha256(benchmark_return.rename_axis("trade_date").reset_index()),
+        }
+    )
+    overall = result["stage46_status"]
+    overall_status = str(overall.loc[overall["module"].eq("overall"), "status"].iloc[0])
+    summary = {
+        "command": "run-time-series-models",
+        "mode": args.mode,
+        "status": overall_status,
+        "synthetic_engineering_only": args.mode == "sample",
+        "final_holdout_start": protocol["final_holdout_start"],
+        "protocol_sha256": protocol["protocol_sha256"],
+        "project_config_sha256": file_sha256(args.project_config),
+        "experiment_registry_sha256": file_sha256(args.experiment_registry),
+        "input_hashes": input_hashes,
+        "output_files": sorted(str(path) for path in out.glob("*.csv")),
+    }
+    (out / "stage46_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    if args.mode == "real" and overall_status != "dynamic_ready":
+        return 2
+    return 0
+
+
+def _cmd_run_portfolio_ablation(args: argparse.Namespace) -> int:
+    out = ensure_dir(args.output_dir)
+    protocol = load_research_protocol(args.protocol)
+    if protocol["mode"] != args.mode:
+        raise ValueError(f"protocol mode {protocol['mode']} does not match --mode {args.mode}")
+    pit_gate_passed = False
+    if args.mode == "real":
+        if not args.pit_gate_summary:
+            raise ValueError("real mode requires --pit-gate-summary from the completed real data gate")
+        gate_path = Path(args.pit_gate_summary)
+        if not gate_path.exists():
+            raise FileNotFoundError(gate_path)
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        pit_gate_passed = gate.get("status") == "passed"
+        if not pit_gate_passed:
+            raise ValueError("real PIT data gate is not passed")
+        if not args.stage46_dir:
+            raise ValueError("real mode requires --stage46-dir with completed stage 4-6 artifacts")
+    registry = pd.read_csv(args.experiment_registry)
+    validate_kalman_registry(registry)
+    bundle = load_config_bundle(args.project_config, args.factor_config, args.backtest_config)
+    validate_config_bundle(bundle)
+    explicit = [args.monthly_ic, args.monthly_returns, args.state_variables, args.benchmark_returns]
+    if any(explicit) and not all(explicit):
+        raise ValueError("monthly IC, monthly returns, state variables and benchmark returns must be supplied together")
+    input_paths: dict[str, Path] = {}
+    if all(explicit):
+        input_paths = {
+            "monthly_ic": Path(args.monthly_ic),
+            "monthly_returns": Path(args.monthly_returns),
+            "state_variables": Path(args.state_variables),
+            "benchmark_returns": Path(args.benchmark_returns),
+        }
+        for name, path in input_paths.items():
+            if not path.exists():
+                raise FileNotFoundError(f"{name}: {path}")
+        monthly_ic = pd.read_csv(input_paths["monthly_ic"])
+        monthly_returns = pd.read_csv(input_paths["monthly_returns"])
+        state_variables = pd.read_csv(input_paths["state_variables"])
+        benchmark_frame = pd.read_csv(input_paths["benchmark_returns"])
+        required_benchmark = {"trade_date", "benchmark_return"}
+        if not required_benchmark.issubset(benchmark_frame.columns):
+            raise ValueError("benchmark returns require trade_date,benchmark_return")
+        benchmark_return = pd.Series(
+            pd.to_numeric(benchmark_frame["benchmark_return"], errors="coerce").to_numpy(),
+            index=pd.to_datetime(benchmark_frame["trade_date"]),
+            name="benchmark_return",
+        ).dropna()
+    else:
+        if args.mode == "real":
+            raise ValueError("real mode requires all four explicit stage-2 input artifacts")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            data = LocalDataLoader(args.data_dir, create_if_missing=True).load_all()
+            factor_panel, factor_cols = build_factor_panel(data, horizon=1, index_code="000905.SH")
+            benchmark_return = _benchmark_return_series(data, "000905.SH")
+            labels = build_monthly_labels(data["daily_bar"]["trade_date"], final_holdout_start=protocol["final_holdout_start"])
+            dates = pd.DatetimeIndex(pd.to_datetime(labels["signal_date"].unique()))
+            labeled_panel = attach_monthly_label_returns(factor_panel, data["daily_bar"], labels)
+            monthly_ic = build_monthly_factor_ic(labeled_panel, factor_cols, "monthly_forward_return", dates)
+            monthly_returns = build_monthly_factor_returns(
+                labeled_panel, factor_cols, "monthly_forward_return", dates, benchmark_return
+            )
+            state_variables = build_monthly_state_variables(
+                factor_panel, _monthly_state_market(data), benchmark_return, labels
+            )
+        for item in caught:
+            if item.category.__name__ not in {"FutureWarning", "RuntimeWarning"}:
+                raise RuntimeError(f"unexpected input warning {item.category.__name__}: {item.message}")
+    for frame_name, frame in (("monthly_ic", monthly_ic), ("monthly_returns", monthly_returns)):
+        if not frame.empty:
+            frame["signal_date"] = pd.to_datetime(frame["signal_date"])
+            frame["availability_date"] = pd.to_datetime(frame["availability_date"])
+            if bool((frame["availability_date"] <= frame["signal_date"]).any()):
+                raise ValueError(f"{frame_name} violates label availability timing")
+    artifact_paths: dict[str, Path] = {}
+    artifacts: dict[str, pd.DataFrame] | None = None
+    if args.mode == "real":
+        stage46_dir = Path(args.stage46_dir)
+        if not stage46_dir.exists():
+            raise FileNotFoundError(stage46_dir)
+        artifacts = {}
+        for key in ARTIFACT_KEYS:
+            path = stage46_dir / f"{key}.csv"
+            if path.exists():
+                artifacts[key] = pd.read_csv(path)
+                artifact_paths[f"stage46_{key}"] = path
+    time_series_config = dict(bundle.project.get("time_series", {}))
+    time_series_config["mode"] = args.mode
+    time_series_config["pit_gate_passed"] = pit_gate_passed
+    dates = pd.DatetimeIndex(pd.to_datetime(monthly_ic.get("signal_date", pd.Series(dtype="datetime64[ns]")).dropna().unique()))
+    cost_multipliers = {
+        str(name): float(value)
+        for name, value in bundle.backtest.get("robustness", {}).get("cost_multipliers", {}).items()
+    } or None
+    result = run_stage7_ablation(
+        monthly_ic,
+        monthly_returns,
+        state_variables,
+        benchmark_return,
+        artifacts=artifacts,
+        config=time_series_config,
+        cost_config=bundle.cost,
+        cost_multipliers=cost_multipliers,
+        rebalance_dates=dates,
+        final_holdout_start=protocol["final_holdout_start"],
+        mode=args.mode,
+    )
+    for name, frame in result.items():
+        frame.to_csv(out / f"{name}.csv", index=False, encoding="utf-8")
+    input_hashes = (
+        {name: file_sha256(path) for name, path in input_paths.items()}
+        if input_paths else {
+            "monthly_ic": dataframe_sha256(monthly_ic),
+            "monthly_returns": dataframe_sha256(monthly_returns),
+            "state_variables": dataframe_sha256(state_variables),
+            "benchmark_returns": dataframe_sha256(benchmark_return.rename_axis("trade_date").reset_index()),
+        }
+    )
+    input_hashes.update({name: file_sha256(path) for name, path in artifact_paths.items()})
+    overall = result["ablation_status"]
+    overall_status = str(overall.loc[overall["portfolio_id"].eq("overall"), "status"].iloc[0])
+    summary = {
+        "command": "run-portfolio-ablation",
+        "mode": args.mode,
+        "status": overall_status,
+        "synthetic_engineering_only": args.mode == "sample",
+        "final_holdout_start": protocol["final_holdout_start"],
+        "protocol_sha256": protocol["protocol_sha256"],
+        "project_config_sha256": file_sha256(args.project_config),
+        "experiment_registry_sha256": file_sha256(args.experiment_registry),
+        "input_hashes": input_hashes,
+        "output_files": sorted(str(path) for path in out.glob("*.csv")),
+    }
+    (out / "stage7_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    if args.mode == "real" and overall_status != "ablation_complete":
+        return 2
+    return 0
+
+
+def _cmd_run_promotion_audit(args: argparse.Namespace) -> int:
+    out = ensure_dir(args.output_dir)
+    protocol = load_research_protocol(args.protocol)
+    if protocol["mode"] != args.mode:
+        raise ValueError(f"protocol mode {protocol['mode']} does not match --mode {args.mode}")
+    pit_gate_passed = False
+    data_gate_status = None
+    if args.mode == "real":
+        if not args.pit_gate_summary:
+            raise ValueError("real mode requires --pit-gate-summary from the completed real data gate")
+        gate_path = Path(args.pit_gate_summary)
+        if not gate_path.exists():
+            raise FileNotFoundError(gate_path)
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        data_gate_status = gate.get("status")
+        pit_gate_passed = gate.get("status") == "passed"
+        if not pit_gate_passed:
+            raise ValueError("real PIT data gate is not passed")
+        if not args.stage7_dir:
+            raise ValueError("real mode requires --stage7-dir with completed stage 7 artifacts")
+    registry = pd.read_csv(args.experiment_registry)
+    validate_kalman_registry(registry)
+    bundle = load_config_bundle(args.project_config, args.factor_config, args.backtest_config)
+    validate_config_bundle(bundle)
+
+    input_hashes: dict[str, str] = {}
+    auxiliary: dict[str, pd.DataFrame] = {}
+    if args.stage7_dir:
+        stage7_dir = Path(args.stage7_dir)
+        if not stage7_dir.exists():
+            raise FileNotFoundError(stage7_dir)
+        frames: dict[str, pd.DataFrame] = {}
+        for name in (*STAGE7_INPUT_KEYS, "kalman_trial_registry", "execution_compliance_summary"):
+            path = stage7_dir / f"{name}.csv"
+            if path.exists():
+                frame = pd.read_csv(path)
+                input_hashes[f"stage7_{name}"] = file_sha256(path)
+            elif name in STAGE7_INPUT_KEYS:
+                raise FileNotFoundError(f"stage 7 artifact missing: {path}")
+            else:
+                continue
+            if name in STAGE7_INPUT_KEYS:
+                frames[name] = frame
+            else:
+                auxiliary[name] = frame
+    else:
+        if args.mode == "real":
+            raise ValueError("real mode requires --stage7-dir with completed stage 7 artifacts")
+        frames = synthesize_stage7_frames()
+        for name, frame in frames.items():
+            frame.to_csv(out / f"{name}.csv", index=False, encoding="utf-8")
+            input_hashes[f"synthetic_{name}"] = dataframe_sha256(frame)
+
+    executed_trials = auxiliary.get("kalman_trial_registry")
+    execution_violations = None
+    compliance = auxiliary.get("execution_compliance_summary")
+    if compliance is not None and "violations" in compliance.columns:
+        execution_violations = int(pd.to_numeric(compliance["violations"], errors="coerce").fillna(0).sum())
+    dynamic_cfg = bundle.project.get("time_series", {}).get("dynamic_weights", {})
+    primary_trial = (
+        float(dynamic_cfg.get("process_variance", 0.001)),
+        float(dynamic_cfg.get("observation_variance", 0.01)),
+        float(dynamic_cfg.get("turnover_penalty", 0.20)),
+    )
+    result = run_stage8_promotion_audit(
+        frames,
+        registry,
+        promotion_config=bundle.project.get("promotion", {}),
+        executed_trials=executed_trials,
+        primary_trial=primary_trial,
+        execution_violations=execution_violations,
+        mode=args.mode,
+        pit_gate_passed=pit_gate_passed,
+    )
+    for name, frame in result.items():
+        frame.to_csv(out / f"{name}.csv", index=False, encoding="utf-8")
+    conclusion_row = result["promotion_conclusion"].iloc[0]
+    conclusion = str(conclusion_row["conclusion"])
+    summary = {
+        "command": "run-promotion-audit",
+        "mode": args.mode,
+        "status": conclusion,
+        "dynamic_ready": bool(conclusion_row["dynamic_ready"]),
+        "synthetic_engineering_only": args.mode == "sample",
+        "final_holdout_start": protocol["final_holdout_start"],
+        "protocol_sha256": protocol["protocol_sha256"],
+        "project_config_sha256": file_sha256(args.project_config),
+        "experiment_registry_sha256": file_sha256(args.experiment_registry),
+        "input_hashes": input_hashes,
+        "output_files": sorted(str(path) for path in out.glob("*.csv")),
+    }
+    (out / "stage8_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    write_evidence_manifest(
+        out,
+        run_metadata={
+            "run_id": f"stage8-promotion-audit-{args.mode}",
+            "mode": args.mode,
+            "protocol_sha256": protocol["protocol_sha256"],
+            "data_gate_status": data_gate_status,
+        },
+        claims=[
+            {
+                "claim_id": "stage8_promotion_audit",
+                "status": "supported" if conclusion == "production_candidate" else "evaluated_not_promoted",
+                "evidence": [f"{name}.csv" for name in result] + ["stage8_summary.json"],
+            },
+            {
+                "claim_id": "stage7_portfolio_ablation",
+                "status": "supported_upstream",
+                "evidence": [f"{name}.csv" for name in STAGE7_INPUT_KEYS] + ["stage7_summary.json"],
+            },
+        ],
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    if args.mode == "real" and conclusion != "production_candidate":
+        return 2
+    return 0
+
+
 def _add_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-dir", default="data/sample")
     parser.add_argument("--output-dir", default="outputs/runs")
@@ -521,6 +924,48 @@ def main() -> None:
     baselines.add_argument("--evaluation-end", default="2023-12-31")
     baselines.add_argument("--final-holdout-start", default="2024-01-01")
 
+    stage46 = sub.add_parser("run-time-series-models", help="Run strict stage 4-6 Kalman, HMM, volatility and DCC research.")
+    stage46.add_argument("--data-dir", default="data/sample")
+    stage46.add_argument("--output-dir", default="outputs/stage46")
+    stage46.add_argument("--mode", choices=["sample", "real"], default="sample")
+    stage46.add_argument("--monthly-ic")
+    stage46.add_argument("--monthly-returns")
+    stage46.add_argument("--state-variables")
+    stage46.add_argument("--benchmark-returns")
+    stage46.add_argument("--protocol", default="config/research_protocol.yaml")
+    stage46.add_argument("--experiment-registry", default="config/experiment_registry.csv")
+    stage46.add_argument("--project-config", default="config/project_config.yaml")
+    stage46.add_argument("--factor-config", default="config/factor_config.yaml")
+    stage46.add_argument("--backtest-config", default="config/backtest_config.yaml")
+    stage46.add_argument("--pit-gate-summary", help="Required in real mode; JSON summary with status=passed.")
+
+    stage7 = sub.add_parser("run-portfolio-ablation", help="Run stage 7 fixed portfolio schemes and ablation experiments.")
+    stage7.add_argument("--data-dir", default="data/sample")
+    stage7.add_argument("--output-dir", default="outputs/stage7")
+    stage7.add_argument("--mode", choices=["sample", "real"], default="sample")
+    stage7.add_argument("--monthly-ic")
+    stage7.add_argument("--monthly-returns")
+    stage7.add_argument("--state-variables")
+    stage7.add_argument("--benchmark-returns")
+    stage7.add_argument("--stage46-dir", help="Required in real mode; directory with stage 4-6 output CSVs.")
+    stage7.add_argument("--protocol", default="config/research_protocol.yaml")
+    stage7.add_argument("--experiment-registry", default="config/experiment_registry.csv")
+    stage7.add_argument("--project-config", default="config/project_config.yaml")
+    stage7.add_argument("--factor-config", default="config/factor_config.yaml")
+    stage7.add_argument("--backtest-config", default="config/backtest_config.yaml")
+    stage7.add_argument("--pit-gate-summary", help="Required in real mode; JSON summary with status=passed.")
+
+    stage8 = sub.add_parser("run-promotion-audit", help="Run stage 8 statistical, overfitting and promotion audit.")
+    stage8.add_argument("--output-dir", default="outputs/stage8")
+    stage8.add_argument("--mode", choices=["sample", "real"], default="sample")
+    stage8.add_argument("--stage7-dir", help="Required in real mode; directory with stage 7 output CSVs.")
+    stage8.add_argument("--protocol", default="config/research_protocol.yaml")
+    stage8.add_argument("--experiment-registry", default="config/experiment_registry.csv")
+    stage8.add_argument("--project-config", default="config/project_config.yaml")
+    stage8.add_argument("--factor-config", default="config/factor_config.yaml")
+    stage8.add_argument("--backtest-config", default="config/backtest_config.yaml")
+    stage8.add_argument("--pit-gate-summary", help="Required in real mode; JSON summary with status=passed.")
+
     args = parser.parse_args()
     try:
         if args.command == "version":
@@ -605,6 +1050,12 @@ def main() -> None:
             raise SystemExit(_cmd_build_monthly_sample(args))
         elif args.command == "run-time-series-baselines":
             raise SystemExit(_cmd_run_time_series_baselines(args))
+        elif args.command == "run-time-series-models":
+            raise SystemExit(_cmd_run_time_series_models(args))
+        elif args.command == "run-portfolio-ablation":
+            raise SystemExit(_cmd_run_portfolio_ablation(args))
+        elif args.command == "run-promotion-audit":
+            raise SystemExit(_cmd_run_promotion_audit(args))
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

@@ -707,7 +707,9 @@ def _run_pipeline_core(
     project_meta = config_bundle.project.get("project", {})
     universe_config = config_bundle.project.get("universe", {})
     research_config = config_bundle.project.get("research", {})
-    time_series_config = config_bundle.project.get("time_series", {})
+    time_series_config = dict(config_bundle.project.get("time_series", {}))
+    time_series_config["mode"] = mode
+    time_series_config["pit_gate_passed"] = mode == "real"
     if mode == "real":
         _validate_real_history(data, research_config, time_series_config)
     index_code = str(universe_config.get("index_code", project_meta.get("benchmark", "000905.SH")))

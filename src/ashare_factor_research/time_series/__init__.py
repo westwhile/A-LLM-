@@ -16,6 +16,7 @@ from ashare_factor_research.time_series.research import (
     build_dynamic_scores,
     run_time_series_research,
 )
+from ashare_factor_research.time_series.stage46 import run_stage46_models
 
 __all__ = [
     "GaussianHMM",
@@ -30,4 +31,5 @@ __all__ = [
     "probability_of_backtest_overfitting",
     "superior_predictive_ability_test",
     "run_time_series_research",
+    "run_stage46_models",
 ]
