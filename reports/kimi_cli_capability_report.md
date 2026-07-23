@@ -2,7 +2,7 @@
 title: Kimi CLI 能力核验报告
 date: 2026-07-19
 stage: 0A
-status: partial_pass
+status: partial_pass_stage46_stopped
 ---
 
 # Kimi CLI 能力核验报告
@@ -37,3 +37,14 @@ Kimi 仅接收了同花顺官方公开端点和安全约束，没有读取仓库
 - Kimi 私有仓库读取：`blocked_pending_explicit_external_disclosure_approval`。
 - Kimi 未修改仓库：通过哈希前后对比确认。
 - 阶段 0A 总体状态：`partial_pass`，不得据此启动 iFinD 全量下载。
+
+## 2026-07-20 阶段 4–6 补充核验
+
+- `0.27.0` 除了不允许 `--plan` 与 `-p/--prompt` 组合，也不允许 `--auto` 与 `-p/--prompt` 组合；后者原文为 `Cannot combine --prompt with --auto.`。
+- Windows 沙箱内普通 prompt 可能因用户级 `.kimi-code/sessions` 目录不可写而直接报 `EPERM`；工作目录可写不能替代该权限。
+- 普通 prompt 和 stdin `--auto` 均出现超过 180 秒无文件产出的情况；退出码、存活状态与 session update 数量都不能代替文件/diff/测试验收。
+- ACP stdio 初始化可用，但本轮 60 秒内收到 5,072 个 update 后仍无 final、权限请求和文件；必须设置监督端超时并核验文件哈希。
+- Hooks 本轮未启用。其 fail-open 特性不能承担安全边界；目录隔离、白名单读写和外部权限处理器才是强制边界。
+- 没有使用 `--yolo`、MCP 或外部搜索。Kimi 未生成阶段 4–6 代码；用户随后明确改由 Codex 直接实施。
+
+详细逐轮事实见 `reports/kimi_stage46_supervision.md` 与 `reports/kimi_stage46_runs.csv`。
