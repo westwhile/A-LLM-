@@ -24,7 +24,7 @@ def run_quality_checks(
         part for part in (str(root / "src"), existing_pythonpath) if part
     )
     commands = [
-        ("compileall", [sys.executable, "-m", "compileall", "-q", "src", "tests"]),
+        ("compileall", [sys.executable, "-m", "compileall", "-q", "src", "tests", "dashboard"]),
         ("unittest", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
     ]
     if not skip_notebooks:
@@ -33,7 +33,7 @@ def run_quality_checks(
             notebook_command.append("--update-artifacts")
         commands.append(("notebook-smoke", notebook_command))
     if importlib.util.find_spec("ruff") is not None:
-        commands.append(("ruff", [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"]))
+        commands.append(("ruff", [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts", "dashboard"]))
     elif require_ruff:
         raise RuntimeError("ruff is required but not installed")
     rows: list[dict[str, object]] = []
