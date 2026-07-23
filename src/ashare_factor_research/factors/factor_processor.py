@@ -38,6 +38,8 @@ def _winsorize_mad_with_counts(
     clipped = pd.Series(False, index=out.index)
     for _, idx in out.groupby(date_col).groups.items():
         s = out.loc[idx, factor_col]
+        if not s.notna().any():
+            continue
         median = s.median(skipna=True)
         mad = (s - median).abs().median(skipna=True)
         if pd.isna(mad) or mad == 0:

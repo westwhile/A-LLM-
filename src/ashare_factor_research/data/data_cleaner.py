@@ -126,7 +126,7 @@ def filter_universe(
 
             list_pos = out["list_date"].map(_first_list_pos)
             list_age = trade_pos.astype("Float64") - list_pos.astype("Float64")
-            mask &= list_age >= min_list_days
+            mask = mask.astype(object) & (list_age >= min_list_days).astype(object)
         else:
             mask &= (out["trade_date"] - out["list_date"]).dt.days >= min_list_days
         mask &= out["delist_date"].isna() | (out["trade_date"] < out["delist_date"])

@@ -111,9 +111,11 @@ def calc_group_monotonicity(group_returns: pd.DataFrame, n_groups: int = 5) -> d
     means = group_returns[group_cols].mean()
     score = float((means.diff().dropna() > 0).mean())
     ranks = pd.Series(range(1, len(means) + 1), index=means.index)
+    ranked_means = means.rank(method="average")
+    correlation = np.nan if ranked_means.nunique() < 2 else float(ranks.corr(ranked_means, method="pearson"))
     return {
         "monotonic_score": score,
-        "mean_spearman_by_group": float(ranks.corr(means.rank(method="average"), method="pearson")),
+        "mean_spearman_by_group": correlation,
     }
 
 

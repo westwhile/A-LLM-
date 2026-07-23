@@ -17,7 +17,7 @@ def calc_ic(
     values: dict[pd.Timestamp, float] = {}
     for date, part in factor_df.groupby(date_col):
         use = part[[factor_col, return_col]].dropna()
-        if len(use) < 3:
+        if len(use) < 3 or use[factor_col].nunique() < 2 or use[return_col].nunique() < 2:
             values[pd.Timestamp(date)] = np.nan
         else:
             if method == "spearman":
