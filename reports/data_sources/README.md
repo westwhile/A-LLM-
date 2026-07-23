@@ -2,6 +2,10 @@
 
 本目录保存数据源合同、账号权限页、官方字段说明和本地导出说明的**脱敏审查摘要**，不保存凭据、商业原始数据或不可再分发附件。
 
+真实 PIT 许可、7 张缺口表、两次人工签署与完整门禁流程见
+[`真实PIT许可与人工签署执行指南.md`](真实PIT许可与人工签署执行指南.md)；可复制填写的签署页见
+[`templates/真实PIT许可签署清单模板.md`](templates/真实PIT许可签署清单模板.md)。
+
 在把 `config/data_source_registry.yaml` 的某张表改为 `license_status: approved_for_research` 和 `pit_ready: true` 前，应创建对应的 `*_review.md`，至少记录：
 
 - 来源名称、版本、接口或本地导出批次；
