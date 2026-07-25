@@ -272,7 +272,7 @@ tests/                          单元测试与端到端 smoke test
 - [研究报告（Markdown）](reports/factor_research_report.md)
 - [研究报告（PDF）](reports/factor_research_report.pdf)
 - [当前实现状态](reports/implementation_status.md)
-- [改进计划实施矩阵](docs/improvement_plan_implementation.md)
+- [改进计划实施矩阵](docs/plans/improvement_plan_implementation.md)
 - [标准数据字典](docs/data_dictionary.md)
 - [Notebook 复现顺序](notebooks/README.md)
 

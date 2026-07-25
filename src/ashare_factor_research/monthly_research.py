@@ -423,23 +423,45 @@ def build_real_mode_audits(
     }
 
 
+def benchmark_returns_frame(benchmark_return: pd.Series | None) -> pd.DataFrame:
+    """Convert the approved benchmark return series to the stage 4-6 handoff frame.
+
+    The frame uses the fixed ``trade_date,benchmark_return`` schema consumed by the
+    time-series CLIs. Invalid input raises instead of silently writing a bad file.
+    """
+
+    if benchmark_return is None:
+        raise ValueError("benchmark return series is missing; cannot build benchmark_returns.csv")
+    frame = benchmark_return.rename("benchmark_return").rename_axis("trade_date").reset_index()
+    if frame.empty:
+        raise ValueError("benchmark_returns frame is empty")
+    if frame["trade_date"].duplicated().any():
+        raise ValueError("benchmark_returns has duplicated trade_date values")
+    if frame["benchmark_return"].isna().any():
+        raise ValueError("benchmark_returns contains NaN benchmark_return values")
+    return frame.sort_values("trade_date").reset_index(drop=True)
+
+
 def write_monthly_artifacts(
     output_dir: str | Path,
     monthly_ic: pd.DataFrame,
     monthly_returns: pd.DataFrame,
     state_variables: pd.DataFrame,
+    benchmark_returns: pd.DataFrame,
 ) -> dict[str, Path]:
-    """Persist the three core monthly artifacts."""
+    """Persist the core monthly artifacts plus the stage 4-6 benchmark handoff."""
 
     out = ensure_dir(output_dir)
     paths = {
         "monthly_factor_ic": out / "monthly_factor_ic.csv",
         "monthly_factor_returns": out / "monthly_factor_returns.csv",
         "monthly_state_variables": out / "monthly_state_variables.csv",
+        "benchmark_returns": out / "benchmark_returns.csv",
     }
     monthly_ic.to_csv(paths["monthly_factor_ic"], index=False, encoding="utf-8")
     monthly_returns.to_csv(paths["monthly_factor_returns"], index=False, encoding="utf-8")
     state_variables.to_csv(paths["monthly_state_variables"], index=False, encoding="utf-8")
+    benchmark_returns.to_csv(paths["benchmark_returns"], index=False, encoding="utf-8")
     return paths
 
 

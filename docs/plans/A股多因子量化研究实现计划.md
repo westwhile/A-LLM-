@@ -1346,6 +1346,8 @@ A股多因子选股策略研究｜Python、Pandas、Statsmodels、AkShare/Tushar
 
 ## 50. 项目执行Checklist
 
+> 状态说明（2026-07-25）：本清单为 2026-07-08 原始需求基线，勾选状态从未维护，不代表工作未完成。实际进度以 `reports/implementation_status.md` 的 P0–P3 待办清单与 `docs/plans/README.md` 索引为准；本清单冻结为历史基线，不再逐项勾选。
+
 ### 数据部分
 
 - [ ] 确定股票池

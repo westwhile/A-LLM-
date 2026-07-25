@@ -75,8 +75,8 @@ def load_gate_artifacts(gate_dir: Path) -> dict[str, ArtifactResult]:
 
 
 def load_data_source_gap_matrix(project_root: Path) -> ArtifactResult:
-    """读取项目根目录的 data_source_gap_matrix.csv（数据源与缺口）。"""
+    """读取 reports/data_sources/ 下的 data_source_gap_matrix.csv（数据源与缺口）。"""
     return read_csv_artifact(
-        project_root, "data_source_gap_matrix.csv",
+        project_root / "reports" / "data_sources", "data_source_gap_matrix.csv",
         name="data_source_gap_matrix", expected_columns=GAP_MATRIX_COLUMNS,
     )

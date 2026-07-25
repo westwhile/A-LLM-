@@ -49,7 +49,7 @@ status: blocked_pending_account_evidence
 $env:PYTHONPATH = 'src'
 & '<可用的 python.exe>' scripts/probe_ifind.py `
   --config config/ifind_field_mapping.example.yaml `
-  --output ifind_probe_manifest.json `
+  --output reports/data_sources/ifind_probe_manifest.json `
   --execute `
   --acknowledge-authorized-use
 Remove-Item Env:IFIND_ACCESS_TOKEN -ErrorAction SilentlyContinue

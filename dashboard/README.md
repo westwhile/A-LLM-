@@ -36,7 +36,7 @@ powershell -File scripts/run_dashboard.ps1
 | 页面 | 入口 | 数据来源 |
 | --- | --- | --- |
 | 研究总览 | `dashboard/app.py` | run_metadata.json、research_protocol_snapshot.json、evidence_manifest.json |
-| 数据源与缺口 | `dashboard/pages/1_数据源与缺口.py` | data_source_gap_matrix.csv |
+| 数据源与缺口 | `dashboard/pages/1_数据源与缺口.py` | reports/data_sources/data_source_gap_matrix.csv |
 | 数据质量与 PIT | `dashboard/pages/2_数据质量与PIT.py` | reports/gate/*/data_gate_summary.json + 五项审计 CSV |
 | 因子时序 | `dashboard/pages/3_因子时序.py` | dynamic_factor_weights.csv、factor_weight_*、factor_timing_comparison |
 | 市场状态 | `dashboard/pages/4_市场状态.py` | regime_probabilities.csv 等 regime_* |

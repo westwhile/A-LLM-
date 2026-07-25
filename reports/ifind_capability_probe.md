@@ -40,8 +40,8 @@ status: blocked_missing_access_token
 ## 当前证据
 
 - `config/ifind_field_mapping.example.yaml`：固定探针范围；财务、历史成分和公告 ID 保持为空，必须从账号可见的 SuperCommand 获取，未作猜测。
-- `ifind_probe_manifest.json`：本机 dry-run 结果。
-- `data_source_gap_matrix.csv`：字段级来源决策与阻断状态。
+- `reports/data_sources/ifind_probe_manifest.json`：本机 dry-run 结果。
+- `reports/data_sources/data_source_gap_matrix.csv`：字段级来源决策与阻断状态。
 - `tests/test_ifind_gate.py`：范围限制、凭据脱敏和不落盘原始数据测试。
 
 ## 验证结果

@@ -26,6 +26,7 @@ from ashare_factor_research.data.sample_data import write_sample_data
 from ashare_factor_research.data.pit_audit import write_real_data_gate
 from ashare_factor_research.monthly_research import (
     attach_monthly_label_returns,
+    benchmark_returns_frame,
     build_monthly_labels,
     build_real_mode_audits,
     check_real_mode_gates,
@@ -332,7 +333,8 @@ def _cmd_build_monthly_sample(args: argparse.Namespace) -> int:
     )
 
     out = ensure_dir(args.output_dir)
-    paths = write_monthly_artifacts(out, monthly_ic, monthly_returns, state_variables)
+    benchmark_frame = benchmark_returns_frame(benchmark_return)
+    paths = write_monthly_artifacts(out, monthly_ic, monthly_returns, state_variables, benchmark_frame)
     economic = compare_preregistered_weight_schemes(monthly_ic, monthly_returns, rebal_dates, cost_config=bundle.cost)
     economic.to_csv(out / "economic_comparison.csv", index=False, encoding="utf-8")
 
@@ -344,6 +346,7 @@ def _cmd_build_monthly_sample(args: argparse.Namespace) -> int:
         "output_dir": str(out),
         "artifact_paths": {k: str(v) for k, v in paths.items()},
         "economic_comparison": str(out / "economic_comparison.csv"),
+        "benchmark_returns_sha256": dataframe_sha256(benchmark_frame),
         "labels": int(len(labels)),
         "factors": len(factor_cols),
         "gate_status": "passed" if args.mode != "real" or not blocking else "blocked",

@@ -134,7 +134,7 @@
 只有 P0 全部完成后才执行：
 
 - [ ] 生成阶段 2 真实月度 IC、因子收益、状态变量和历史成员覆盖产物。
-- [ ] 从已验收的 `benchmark_index` 生成并审计 `trade_date,benchmark_return` 日频文件；当前 `build-monthly-sample` 不会自动落盘该第 4 个输入。
+- [ ] 从已验收的 `benchmark_index` 生成并审计 `trade_date,benchmark_return` 日频文件；自 2026-07-25 起 `build-monthly-sample` 已自动落盘该第 4 个输入并登记哈希，运行后核对即可。
 - [ ] 运行阶段 3 诊断和简单基准，确认缺失、异常和模型失败状态可审计。
 - [ ] 运行阶段 4 的 27 组 Kalman 网格，与静态、12 月、24 月和 EWMA 权重比较。
 - [ ] 运行阶段 5 的 2/3 状态 HMM，检查状态标签、持续期和跨窗口稳定性。
@@ -154,7 +154,7 @@
 
 - [ ] 根据需要建设只读研究看板；不得让前端替代数据和模型门禁。
 - [ ] 深度学习实验仅在至少 8 年合格真实数据、PIT 问题归零且传统模型基线完成后启动。
-- [ ] 当前工作树尚有本轮实现和文档变更；是否整理 Git commit/push 由用户另行决定，不影响本地继续验证。
+- [x] 阶段 4–6 实现与文档变更已提交，工作树干净（2026-07-23）；后续 commit/push 节奏由用户另行决定。
 
 ## 五、完成条件
 
@@ -177,14 +177,14 @@
 
 ## 六、最近验证结果
 
-验证日期：2026-07-22
+验证日期：2026-07-25
 
 解释：以下只验证当前工程状态；不验证真实市场有效性。
 
 | 检查 | 结果 |
 | --- | --- |
 | `compileall` | 通过 |
-| `unittest` | 117 项通过，0 失败 |
+| `unittest` | 163 项通过，0 失败 |
 | 7 个 Notebook smoke | 通过 |
 | 临时样例数据生成 CLI | 通过 |
 | 临时 sample pipeline CLI | 通过 |
@@ -249,4 +249,4 @@ $env:PYTHONPATH = 'src'
   --output-dir outputs/stage46/real-pit-YYYYMMDD
 ```
 
-注意：`--benchmark-returns` 要求 CSV 且包含 `trade_date,benchmark_return` 两列。当前 `build-monthly-sample` 只写 3 个核心月度产物，因此 `benchmark_returns.csv` 需要从已验收的基准指数点位显式转换、校验并登记哈希；不能把指数点位 Parquet 直接传入。
+注意：`--benchmark-returns` 要求 CSV 且包含 `trade_date,benchmark_return` 两列。自 2026-07-25 起 `build-monthly-sample` 自动从已验收基准指数点位转换出第 4 个交接产物 `benchmark_returns.csv`（非空、日期唯一、无 NaN 校验，并在 `monthly_sample_summary.json` 登记 `benchmark_returns_sha256`）；不能把指数点位 Parquet 直接传入。

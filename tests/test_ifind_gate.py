@@ -48,7 +48,7 @@ class IFindGateTest(unittest.TestCase):
     def test_checked_in_config_and_gap_matrix_are_gate_valid(self):
         scope = load_probe_scope("config/ifind_field_mapping.example.yaml")
         scope.validate()
-        with Path("data_source_gap_matrix.csv").open(encoding="utf-8", newline="") as handle:
+        with Path("reports/data_sources/data_source_gap_matrix.csv").open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         self.assertTrue(rows)
         self.assertEqual(len({row["required_field"] for row in rows}), len(rows))

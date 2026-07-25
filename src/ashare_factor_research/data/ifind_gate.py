@@ -262,7 +262,7 @@ def write_manifest(manifest: Mapping[str, Any], path: str | Path) -> None:
 def run_cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the phase-0A read-only iFinD capability gate.")
     parser.add_argument("--config", default="config/ifind_field_mapping.example.yaml")
-    parser.add_argument("--output", default="ifind_probe_manifest.json")
+    parser.add_argument("--output", default="reports/data_sources/ifind_probe_manifest.json")
     parser.add_argument("--execute", action="store_true", help="Send the bounded real HTTP probe.")
     parser.add_argument(
         "--acknowledge-authorized-use",

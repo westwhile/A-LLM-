@@ -14,7 +14,7 @@ from dashboard.ui import PROJECT_ROOT, show_artifact
 
 st.set_page_config(page_title="数据源与缺口", layout="wide")
 st.title("数据源与缺口")
-st.caption("来源：项目根目录 data_source_gap_matrix.csv 与 reports/data_sources/ 探针报告（只读）。")
+st.caption("来源：reports/data_sources/data_source_gap_matrix.csv 与同目录探针报告（只读）。")
 
 gap = load_data_source_gap_matrix(PROJECT_ROOT)
 show_artifact(gap, "数据源缺口矩阵（data_source_gap_matrix.csv）")
