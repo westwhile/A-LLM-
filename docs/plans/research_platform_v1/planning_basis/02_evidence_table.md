@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | A-LLM 已有完整量化工程骨架 | 当前源码、README、测试、CLI | evidence-backed | 工程能力已实现 | 不升级为真实市场有效 |
 | 最新真实数据 gate 为 passed | 当前 `data_gate_summary.json` | evidence-backed | 工程门禁当前通过 | 签署与冻结仍未闭合 |
-| 2026-08-11 本轮本地回归 174 项通过 | `.venv\\Scripts\\python.exe -m unittest discover -s tests` | evidence-backed | 当前观察值 | P0 冻结前重跑；现有因子源字段 warning 未掩盖 |
+| 2026-08-11 本轮本地回归 176 项通过 | `.venv\\Scripts\\python.exe -m unittest discover -s tests` | evidence-backed | 当前观察值 | P0 冻结前重跑；现有因子源字段 warning 未掩盖 |
 | 当前工作树有在途修改 | `git status --short` | evidence-backed | 尚未冻结 | 不清理/覆盖用户修改 |
 | 当前没有可接受真实 run | `outputs/runs` 盘点 | evidence-backed | 真实实证尚未形成 | 不报告市场绩效 |
 | PFROS 尚无代码工程 | PFROS README/TASKS 与目录盘点 | evidence-backed | 当前 M0 规划阶段 | 跨目录实施另行批准 |
@@ -22,6 +22,11 @@
 | 基础模型优于任务专用模型 | 当前项目无证据 | hypothesis | 与 naive/传统/任务模型同切分比较 | 预训练污染与许可待审计 |
 | 合成数据可改善压力覆盖 | TimeGAN 等方法提供生成候选 | hypothesis | 只用于测试/压力 | 不用于真实研究晋级 |
 | Human-in-the-loop 应为 PFROS 核心门 | 个人金融高风险边界与既有架构 | evidence-backed | 建议、批准、执行、事实分离 | 任何 AI 不得绕过批准 |
+| 三大科研方向按 LLM→ML→组合推进 | 用户本轮明确选择 | evidence-backed | 作为个人学习、实验和论文主顺序 | 工程 P3/P4 编号仅兼容保留 |
+| R1 可以完全不使用收益模型 | 文本 Alpha 需要下游任务评价 | unsupported | 使用冻结 Linear/LightGBM evaluator | 防止只评价分类而无法回答 Alpha |
+| R1 应先完成完整 ML 调参 | 会混淆表示与预测器贡献 | unsupported | R1 固定低搜索预算 evaluator，R2 再系统调模 | 两阶段试验必须隔离 |
+| 其他模块可由 AI 无条件直接实现 | 用户意图是减少个人科研投入 | plausible-inference | AI 按 R1–R3 需求实现工程并由人验收 | 避免平台扩张和自动验收 |
+| R1 失败会阻止 R2/R3 | 三条链允许简单基准继续 | unsupported | 冻结 `no_text` 或简单表示继续 R2 | 负结果是合格科研产物 |
 
 ## 证据使用规则
 

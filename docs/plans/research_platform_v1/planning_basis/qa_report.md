@@ -1,6 +1,6 @@
-# QA Report：科研平台计划包 v1.2
+# QA Report：科研平台计划包 v1.3
 
-- 模式：`compose`（基于用户草稿和当前项目证据重构）
+- 模式：`hybrid`（保留既有门禁，按用户最新科研优先级重构）
 - 文本类型：科研平台总纲与分阶段实施计划
 - QA 日期：2026-08-11
 
@@ -9,15 +9,17 @@
 | 维度 | 初始结果 | 处理 |
 |---|---|---|
 | 证据匹配 | 通过，含快照限制 | 已把 gate passed、最终签署、真实 run 分开 |
-| 科学问题 | 通过 | 已分离结构化 ML 主问题与 LLM 后续问题 |
-| 逻辑依赖 | 通过 | P0→P1→P2→P3→P4/P5；PFROS 独立并行 |
+| 科学问题 | 通过 | 已固定 R1 LLM 表示、R2 ML Alpha、R3 组合转化三个连续问题 |
+| 逻辑依赖 | 通过 | P0→P1→P2→R1/P4→R2/P3→R3/P5；PFROS 独立并行 |
 | 方法可检验 | 通过 | 每阶段含对照、失败条件和验收门 |
 | 创新措辞 | 通过 | 不以“使用 AI/LLM”直接声称创新 |
 | 风险边界 | 通过 | 无实盘授权，含隐私、签署和留出期边界 |
 | 术语一致性 | 通过 | 已统一 maturity、gate、P/M 编号 |
-| 文件完整性 | 通过 | 36 个 Markdown 文件存在，其中 17 个模块目录文件；索引与相对链接已验证 |
+| 文件完整性 | 通过 | 37 个 Markdown 文件存在，其中 17 个模块目录文件；索引与相对链接已验证 |
 | 文献状态 | 通过（分级） | 核心原始/官方页面已联网核验；长尾线索明确标记待核验 |
 | 模块边界 | 通过 | A/B/C 分层，异常/合成/Agent/RL/基础模型均有停止或禁止边界 |
+| 贡献隔离 | 通过 | R1 固定 evaluator、R2 固定表示、R3 固定预测，禁止反向留出期选择 |
+| AI 分工 | 通过 | AI 可实现工程与测试，但不能替代许可、预注册、科研结论和个人批准 |
 
 ## 2. 已修复的原草稿缺陷
 
@@ -36,10 +38,15 @@
 - 将异常检测限定为人工复核旁路，合成数据限定为测试/压力用途；
 - 将基础模型限定为评估/适配，Agent/RL 限定为长期受控探索；
 - 核验并纠正 Gu–Kelly–Xiu 主论文期刊与 Chen–Pelger–Zhu 在线/卷期时间。
+- 将个人科研范围收缩为 LLM Event Factor、ML Alpha、Portfolio Optimization；
+- 新增三大科研主线与 AI 工程分工权威入口；
+- 解决“LLM 先于 ML 如何评价”的依赖：R1 使用冻结 Linear/LightGBM evaluator，R2 再系统研究收益模型；
+- 增加 `TextRepresentationArtifact → AlphaPredictionArtifact → PortfolioResearchArtifact` 三段接口；
+- 其他模块改为需求触发的 AI 辅助工程、独立备选或长期探索，不自动全部实施。
 
 ## 3. 已完成的交付检查
 
-- 36 个计划包 Markdown 文件存在且非空，总计 144675 字节；
+- 37 个计划包 Markdown 文件存在且非空；
 - `modules/` 含 16 个专项计划和 1 个索引；
 - Markdown 相对链接全部指向现有文件；
 - `docs/plans/README.md` 已登记唯一入口；
@@ -47,7 +54,7 @@
 - 无冲突标记、未处理占位符或非 Markdown 有效尾随空白；
 - 各阶段文件均包含验收、退出门或完成定义。
 - 16 个专项模块均包含中央问题、实现/方法、实验设计、退出门、阅读路线和来源状态；
-- `.venv\\Scripts\\python.exe -m unittest discover -s tests`：174 项通过；
+- `.venv\\Scripts\\python.exe -m unittest discover -s tests`：176 项通过；
 - 测试仍报告 `large_order_net_mf_amount`、`operating_cash_flow`、`ps` 在签署真实表中无来源列的既有 warning；本计划没有把 warning 或 `insufficient_history` 状态写成真实研究通过。
 
 ## 4. 剩余外部验证

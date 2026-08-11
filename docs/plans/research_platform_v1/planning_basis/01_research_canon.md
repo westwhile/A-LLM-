@@ -4,7 +4,7 @@
 
 - 活跃主线是 `A-LLM-`；
 - 当前工程覆盖数据标准化、质量/PIT、因子、walk-forward、组合回测、归因、Kalman/HMM/GARCH/DCC、消融、晋级审计与只读看板；
-- 2026-08-11 本轮本地完整回归为 174 项测试通过，但 P0 正式冻结必须重跑；
+- 2026-08-11 本轮本地完整回归为 176 项测试通过，但 P0 正式冻结必须重跑；
 - `reports/gate/real-pit-20260725-r1/data_gate_summary.json` 当前为 `passed`，必需表齐全、阻断为空、专项审计非空；
 - 当前工作树有未提交修改；
 - `signoff_sheet_20260727.md` 的 B 哈希确认和 C 终审尚未全部完成；
@@ -30,6 +30,8 @@
 - 受限数据、raw/standard、outputs、tmp 和凭据不得进入发布包；
 - 第一次人工确认授权许可/入库，第二次确认审计/数据冻结，AI 不代签；
 - 工程完成、数据验收和真实市场结论必须分开。
+- 个人科研优先级固定为：R1 LLM Event Factor → R2 Machine Learning Alpha → R3 Portfolio Optimization；
+- 其他模块不作为当前个人科研主线，原则上由 AI 按 R1–R3 的明确需求辅助实现并接受人工验收。
 
 ## 4. 术语定义
 
@@ -51,6 +53,8 @@
 - Isolation Forest/AutoEncoder 异常旁路；
 - purged/embargo 验证增强；
 - RAG、知识图谱、因果 ML、基础模型、Agent、另类/合成数据和多模态研究。
+
+其中只有 LLM Event Factor、ML Alpha 和 Portfolio Optimization 是当前三大个人科研方向；其余条目是工程底座、独立备选或长期探索。
 
 ## 6. 已联网核验的核心研究来源（2026-08-11）
 
@@ -85,3 +89,6 @@
 - 合成数据可以替代真实 OOS；
 - DML 自动解决未观测混杂；
 - BloombergGPT 等论文模型必然有可直接使用的开放权重。
+- “由 AI 实现”意味着无需数据验收、人工审查或科研判断；
+- R1 可以同时任意调整文本表示和收益 evaluator；
+- R3 可以为了组合绩效回到 R1/R2 重新选择最终留出期模型。
