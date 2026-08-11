@@ -10,6 +10,7 @@ import pandas as pd
 from ashare_factor_research.data.pit_audit import (
     AUDIT_FILENAMES,
     REQUIRED_REAL_TABLES,
+    _suspended_codes_by_date,
     audit_benchmark_alignment,
     audit_financial_revisions,
     audit_pit_timing,
@@ -31,6 +32,29 @@ from ashare_factor_research.utils.io import ensure_dir
 REQUIRED_COVERAGE_FIELDS = {
     "daily_bar": ["amount", "adj_factor"],
 }
+
+# 登记豁免（2026-08-11 用户签署批准；本批次一次性决策，写死、不可配置；
+# 记录见 reports/data_sources/预检总报告_20260727.md 第六节）：
+# - financial_indicator.gross_margin：金融类成员（银行/保险/券商/多元金融）无营业成本概念，
+#   RESSET 口径毛利率为空属行业惯例 → 分母剔除金融类成员日（industry 表新申万一级行业名关键词判定；
+#   industry 缺失的成员保持计入）。
+# - daily_bar.amount：腾讯源退市股无成交额（daily_bar_review.md 已声明的已知限制）→ 分母剔除
+#   “daily_bar 全部行 amount 均缺失”的股票成员日（清单 data/staging/real-pit-20260725/derived/no_amount_stocks.txt）。
+COVERAGE_EXEMPTION_FIELDS = frozenset({
+    ("financial_indicator", "gross_margin"),
+    ("daily_bar", "amount"),
+})
+FINANCIAL_INDUSTRY_KEYWORDS = ("银行", "非银金融", "证券", "保险", "多元金融")
+
+
+def _no_amount_stock_codes(daily_bar: pd.DataFrame | None) -> set[str]:
+    """豁免识别规则：daily_bar 中全部行 amount 均缺失的 ts_code（对应腾讯源无成交额股票）。"""
+    if daily_bar is None or daily_bar.empty or not {"ts_code", "amount"}.issubset(daily_bar.columns):
+        return set()
+    has_amount = set(
+        daily_bar.loc[pd.to_numeric(daily_bar["amount"], errors="coerce").notna(), "ts_code"].astype(str).unique()
+    )
+    return set(daily_bar["ts_code"].astype(str).unique()) - has_amount
 
 
 def attach_monthly_label_returns(
@@ -345,13 +369,22 @@ def compute_historical_member_coverage(
     required_fields: dict[str, list[str]] | None = None,
     required_start: str = "2015-01-01",
 ) -> pd.DataFrame:
-    """Compute per-date coverage of required fields over active historical members."""
+    """Compute per-date coverage of required fields over active historical members.
+
+    口径（2026-08-11 修复）：
+    - 日频表（daily_bar/daily_basic 等，按 trade_date 对齐）：分母为当日在册且**非停牌**成员——
+      停牌日无 K 线/无资金流是正确数据行为（与 pit_audit.universe_coverage 已批准口径同原则，
+      实测停牌日有行率 daily_bar 0.000、daily_basic 字段级 net_mf/turnover 结构性 NaN）。
+    - financial_indicator（季度表，无 trade_date）：按 usable_date 前向填充（与因子消费端
+      align_financial_to_dates 同语义）后按日统计，分母为全部在册成员（停牌成员仍有可见财报）。
+    """
 
     required_fields = dict(required_fields or REQUIRED_COVERAGE_FIELDS)
+    required_fields = {name: list(dict.fromkeys(fields)) for name, fields in required_fields.items()}  # 字段去重防重复列
     members = tables.get("index_member")
     calendar = tables.get("trade_calendar")
     if members is None or members.empty or calendar is None or calendar.empty:
-        return pd.DataFrame(columns=["trade_date", "table", "field", "active_count", "non_missing_count", "coverage"])
+        return pd.DataFrame(columns=["trade_date", "table", "field", "active_count", "exempted_count", "non_missing_count", "coverage"])
 
     cal = calendar.copy()
     if "is_open" in cal:
@@ -362,6 +395,55 @@ def compute_historical_member_coverage(
     member = members[members["index_code"].astype(str).eq(index_code)].copy()
     member["in_date"] = pd.to_datetime(member["in_date"], errors="coerce")
     member["out_date"] = pd.to_datetime(member["out_date"], errors="coerce")
+    member_codes = set(member["ts_code"].astype(str))
+
+    suspended = _suspended_codes_by_date(tables.get("suspension"), dates)
+
+    # 日频表：按日期预分组，避免逐日全表扫描；字段去重防止重复列
+    daily_tables: dict[str, dict[pd.Timestamp, pd.DataFrame]] = {}
+    for name, fields in required_fields.items():
+        if name == "financial_indicator":
+            continue
+        fields = list(dict.fromkeys(fields))
+        table = tables.get(name)
+        if table is None or table.empty or "trade_date" not in table.columns:
+            daily_tables[name] = {}
+            continue
+        keep = ["trade_date", "ts_code", *[f for f in fields if f in table.columns]]
+        frame = table[keep].copy()
+        frame["trade_date"] = pd.to_datetime(frame["trade_date"])
+        frame["ts_code"] = frame["ts_code"].astype(str)
+        daily_tables[name] = {date: part for date, part in frame.groupby("trade_date")}
+
+    # 财务表：usable_date 前向填充（与因子消费同语义），仅取历史成员代码
+    financial_aligned: dict[pd.Timestamp, pd.DataFrame] = {}
+    financial_fields = required_fields.get("financial_indicator")
+    financial = tables.get("financial_indicator")
+    if financial_fields:
+        if financial is not None and not financial.empty:
+            from ashare_factor_research.factors.fundamental_factors import align_financial_to_dates
+
+            fin = financial[financial["ts_code"].astype(str).isin(member_codes)].copy()
+            aligned = align_financial_to_dates(dates, fin)
+            if not aligned.empty:
+                aligned["trade_date"] = pd.to_datetime(aligned["trade_date"])
+                aligned["ts_code"] = aligned["ts_code"].astype(str)
+                financial_aligned = {date: part for date, part in aligned.groupby("trade_date")}
+
+    # 登记豁免预计算（仅对已签署的两个字段生效；见模块级注释）
+    no_amount_codes: set[str] = set()
+    if ("daily_bar", "amount") in COVERAGE_EXEMPTION_FIELDS and "amount" in required_fields.get("daily_bar", []):
+        no_amount_codes = _no_amount_stock_codes(tables.get("daily_bar"))
+    financial_codes_by_date: dict[pd.Timestamp, set[str]] = {}
+    if ("financial_indicator", "gross_margin") in COVERAGE_EXEMPTION_FIELDS and "gross_margin" in (financial_fields or []):
+        industry = tables.get("industry")
+        if industry is not None and not industry.empty and {"trade_date", "ts_code", "industry_name"}.issubset(industry.columns):
+            ind = industry[["trade_date", "ts_code", "industry_name"]].copy()
+            ind["trade_date"] = pd.to_datetime(ind["trade_date"])
+            fin_mask = ind["industry_name"].astype(str).str.contains("|".join(FINANCIAL_INDUSTRY_KEYWORDS), na=False)
+            financial_codes_by_date = {
+                date: set(part["ts_code"].astype(str)) for date, part in ind[fin_mask].groupby("trade_date")
+            }
 
     rows: list[dict[str, object]] = []
     for date in dates:
@@ -370,33 +452,56 @@ def compute_historical_member_coverage(
         active_count = len(active)
         if active_count == 0:
             continue
+        active_non_suspended = active - suspended.get(date, set())
+        financial_today = financial_codes_by_date.get(date, set())
         for table_name, fields in required_fields.items():
-            table = tables.get(table_name)
-            if table is None or table.empty:
+            if table_name == "financial_indicator":
+                # 分母=全部在册成员（停牌成员仍有可见财报）；gross_margin 登记豁免金融类成员日
+                day = financial_aligned.get(date)
                 for field in fields:
+                    exempted = active & financial_today if field == "gross_margin" else set()
+                    eligible = active - exempted
+                    if day is None or day.empty or field not in day.columns:
+                        non_missing = 0
+                    else:
+                        part = day[day["ts_code"].isin(eligible)]
+                        non_missing = int(part[field].notna().sum())
                     rows.append({
                         "trade_date": date,
                         "table": table_name,
                         "field": field,
                         "active_count": active_count,
-                        "non_missing_count": 0,
-                        "coverage": 0.0,
+                        "exempted_count": len(exempted),
+                        "non_missing_count": non_missing,
+                        "coverage": (non_missing / len(eligible)) if eligible else 1.0,
                     })
                 continue
-            day = table[pd.to_datetime(table["trade_date"]).eq(date)].copy()
-            day["ts_code"] = day["ts_code"].astype(str)
+            # 日频表：分母=在册非停牌成员；daily_bar.amount 登记豁免无成交额股票成员日
+            table = tables.get(table_name)
+            table_missing = table is None or table.empty
+            day = daily_tables.get(table_name, {}).get(date)
             for field in fields:
-                if field not in day:
+                exempted = (
+                    active_non_suspended & no_amount_codes
+                    if (table_name, field) == ("daily_bar", "amount")
+                    else set()
+                )
+                eligible = active_non_suspended - exempted
+                if table_missing or (table is not None and field not in table.columns):
                     non_missing = 0
+                    coverage = 0.0  # 整表/字段缺失：恒 0（不因分母为 0 误判通过）
                 else:
-                    non_missing = int(day[day["ts_code"].isin(active)][field].notna().sum())
+                    part = day[day["ts_code"].isin(eligible)] if day is not None else day
+                    non_missing = int(part[field].notna().sum()) if day is not None else 0
+                    coverage = (non_missing / len(eligible)) if eligible else 1.0
                 rows.append({
                     "trade_date": date,
                     "table": table_name,
                     "field": field,
                     "active_count": active_count,
+                    "exempted_count": len(exempted),
                     "non_missing_count": non_missing,
-                    "coverage": non_missing / active_count,
+                    "coverage": coverage,
                 })
     return pd.DataFrame(rows)
 

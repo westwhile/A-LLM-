@@ -233,20 +233,40 @@ def _cmd_label_events(args: argparse.Namespace) -> int:
     return 0
 
 
+# 因子输入列的审计口径修正（2026-08-11）：
+# - roa：因子侧由 net_profit/total_assets 推导（factors/fundamental_factors.py），审计映射到真实来源列。
+# - ps / large_order_net_mf_amount / operating_cash_flow：真实签署表无此列且无已签署推导路径
+#   （样本表有这三列；RESSET 批次 daily_basic 无 ps/large_order 单列、financial_indicator 无经营现金流），
+#   对应因子 sp / large_order_mf_20 / cfp 在本批 real 数据下不可得——已知缺口，不进覆盖审计，构建日志明示。
+FACTOR_INPUT_DERIVED_SOURCES: dict[str, list[str]] = {
+    "roa": ["net_profit", "total_assets"],
+}
+UNSOURCED_FACTOR_INPUTS = frozenset({"ps", "large_order_net_mf_amount", "operating_cash_flow"})
+
+
+def unsourced_factor_inputs(factor_specs: list) -> list[str]:
+    """因子配置启用但真实表无来源列的输入字段（已知缺口，供报告/日志）。"""
+    return sorted({col for spec in factor_specs for col in spec.input_columns if col in UNSOURCED_FACTOR_INPUTS})
+
+
 def _required_fields_from_specs(factor_specs: list) -> dict[str, list[str]]:
     """Map factor input columns to their likely source tables for coverage checks."""
 
     field_map: dict[str, set[str]] = {
         "daily_bar": {"amount", "adj_factor", "close"},
-        "daily_basic": {"turnover_rate", "total_mv", "pb", "pe_ttm", "ps", "net_mf_amount", "large_order_net_mf_amount"},
-        "financial_indicator": {"roe", "roa", "gross_margin", "debt_ratio", "operating_revenue", "total_assets", "revenue_yoy", "profit_yoy", "operating_cash_flow"},
+        "daily_basic": {"turnover_rate", "total_mv", "pb", "pe_ttm", "net_mf_amount"},
+        "financial_indicator": {"roe", "gross_margin", "debt_ratio", "operating_revenue", "total_assets",
+                                "net_profit", "revenue_yoy", "profit_yoy"},
     }
     required: dict[str, set[str]] = {name: set() for name in field_map}
     for spec in factor_specs:
         for column in spec.input_columns:
-            for table, fields in field_map.items():
-                if column in fields:
-                    required[table].add(column)
+            if column in UNSOURCED_FACTOR_INPUTS:
+                continue
+            for source_column in FACTOR_INPUT_DERIVED_SOURCES.get(column, [column]):
+                for table, fields in field_map.items():
+                    if source_column in fields:
+                        required[table].add(source_column)
     return {table: sorted(fields) for table, fields in required.items() if fields}
 
 
@@ -276,11 +296,24 @@ def _cmd_build_monthly_sample(args: argparse.Namespace) -> int:
     factor_config_dict = load_factor_config(args.factor_config)
     specs = get_factor_specs(enabled_factor_names(factor_config_dict))
     required_fields = _required_fields_from_specs(specs)
-    required_fields.setdefault("daily_bar", []).extend(["amount", "adj_factor"])
+    bar_required = required_fields.setdefault("daily_bar", [])
+    for field in ["amount", "adj_factor"]:
+        if field not in bar_required:
+            bar_required.append(field)
+    unsourced = unsourced_factor_inputs(specs)
+    if unsourced:
+        print(f"WARNING: factor inputs with no source column in the signed real tables "
+              f"(factors will be empty; documented gap): {unsourced}")
 
     trade_dates = data.get("trade_calendar", data["daily_bar"])["trade_date"]
+    # The holdout tripwire in build_monthly_labels raises when a label's
+    # availability lands inside the holdout; real calendars extend past the
+    # holdout start, so feed only pre-holdout dates — the last label then ends
+    # one month earlier with availability strictly before the holdout.
+    pre_holdout_dates = pd.to_datetime(trade_dates)
+    pre_holdout_dates = pre_holdout_dates[pre_holdout_dates < pd.Timestamp(args.final_holdout_start)]
     labels = build_monthly_labels(
-        trade_dates,
+        pre_holdout_dates,
         final_holdout_start=args.final_holdout_start,
     )
 

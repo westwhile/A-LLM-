@@ -138,6 +138,42 @@ class Phase23HardGatesTest(unittest.TestCase):
         )
         self.assertTrue(any("coverage below" in reason for reason in blocking))
 
+    def test_universe_coverage_excludes_suspended_members(self):
+        """口径修正（2026-08-11 批准）：停牌成员不计入 daily_bar 覆盖率分母。"""
+        dates = pd.date_range("2015-01-05", periods=3, freq="B")
+        codes = [f"{i:06d}.SZ" for i in range(5)]
+        tables = {
+            "trade_calendar": pd.DataFrame({"trade_date": dates, "is_open": True}),
+            "index_member": pd.DataFrame({
+                "index_code": ["000905.SH"] * 5, "ts_code": codes, "weight": 0.2,
+                "in_date": pd.Timestamp("2014-01-01"), "out_date": pd.NaT,
+            }),
+            "suspension": pd.DataFrame({
+                "ts_code": codes[:2],
+                "suspend_date": [dates[0], dates[0]],
+                "resume_date": [dates[-1] + pd.Timedelta(days=1), dates[-1] + pd.Timedelta(days=1)],
+            }),
+            # 停牌 2 只无 K 线行（正确数据行为），仅 3 只有行情
+            "daily_bar": pd.DataFrame({
+                "trade_date": np.tile(dates, 3), "ts_code": np.repeat(codes[2:], 3),
+            }),
+            # 其余三表停牌日仍有行
+            "daily_basic": pd.DataFrame({"trade_date": np.tile(dates, 5), "ts_code": np.repeat(codes, 3)}),
+            "industry": pd.DataFrame({"trade_date": np.tile(dates, 5), "ts_code": np.repeat(codes, 3)}),
+            "limit_price": pd.DataFrame({"trade_date": np.tile(dates, 5), "ts_code": np.repeat(codes, 3)}),
+        }
+        cov = audit_universe_coverage(tables, required_start="2015-01-01")
+        self.assertIn("suspended_member_count", cov.columns)
+        self.assertTrue((cov["suspended_member_count"] == 2).all())
+        self.assertTrue((cov["daily_bar_coverage"] == 1.0).all())  # 3/3 而非 3/5
+        self.assertTrue(cov["passed"].all())
+        # 对照：无停牌表时维持旧口径 3/5=0.6 并触发不达标
+        tables_no_suspension = {name: frame for name, frame in tables.items() if name != "suspension"}
+        cov_old = audit_universe_coverage(tables_no_suspension, required_start="2015-01-01")
+        self.assertTrue((cov_old["suspended_member_count"] == 0).all())
+        self.assertTrue((cov_old["daily_bar_coverage"] == 0.6).all())
+        self.assertFalse(cov_old["passed"].any())
+
     def test_overlapping_labels_rejected(self):
         dates = pd.date_range("2022-01-03", periods=40, freq="B")
         with self.assertRaisesRegex(ValueError, "overlap"):
@@ -155,6 +191,130 @@ class Phase23HardGatesTest(unittest.TestCase):
         )
         self.assertIn("coverage", coverage.columns)
         self.assertTrue((coverage["coverage"] == 1.0).all())
+
+    def test_historical_member_coverage_financial_pit_and_suspension(self):
+        """回归：financial_indicator（无 trade_date）按 usable_date 口径统计，不再 KeyError；
+        日频表分母剔除当日停牌成员（与已批准的门禁口径同原则）。"""
+        dates = pd.date_range("2015-01-05", periods=3, freq="B")
+        codes = [f"{i:06d}.SZ" for i in range(5)]
+        tables = {
+            "trade_calendar": pd.DataFrame({"trade_date": dates, "is_open": True}),
+            "index_member": pd.DataFrame({
+                "index_code": ["000905.SH"] * 5, "ts_code": codes, "weight": 0.2,
+                "in_date": pd.Timestamp("2014-01-01"), "out_date": pd.NaT,
+            }),
+            "suspension": pd.DataFrame({
+                "ts_code": codes[:2],
+                "suspend_date": [dates[0], dates[0]],
+                "resume_date": [dates[-1] + pd.Timedelta(days=1), dates[-1] + pd.Timedelta(days=1)],
+            }),
+            # 停牌 2 只无 K 线行（正确数据行为），3 只有行情
+            "daily_bar": pd.DataFrame({
+                "trade_date": np.tile(dates, 3), "ts_code": np.repeat(codes[2:], 3),
+                "amount": 1e7, "adj_factor": 1.0,
+            }),
+            # 季度财务表：无 trade_date；codes[3] 第三日才可用；codes[4] roe 缺失
+            "financial_indicator": pd.DataFrame({
+                "ts_code": codes,
+                "report_period": pd.Timestamp("2014-09-30"),
+                "ann_date": pd.Timestamp("2014-10-30"),
+                "usable_date": [pd.Timestamp("2014-10-31")] * 3 + [pd.Timestamp("2015-01-07"), pd.Timestamp("2014-10-31")],
+                "revision_date": pd.Timestamp("2014-10-30"),
+                "revision_id": 0,
+                "source_id": "s1",
+                "roe": [0.1, 0.1, 0.1, 0.1, np.nan],
+                "gross_margin": 0.2, "debt_ratio": 0.4, "revenue_yoy": 0.1, "profit_yoy": 0.1,
+            }),
+        }
+        coverage = compute_historical_member_coverage(
+            tables,
+            required_fields={"daily_bar": ["amount"], "financial_indicator": ["roe"]},
+            required_start="2015-01-01",
+        )
+        bar = coverage[coverage["table"] == "daily_bar"]
+        self.assertTrue((bar["coverage"] == 1.0).all())  # 3/(5-2停牌)=1.0 而非 3/5
+        fin_rows = coverage[coverage["table"] == "financial_indicator"].sort_values("trade_date")
+        self.assertFalse(fin_rows.empty)
+        self.assertAlmostEqual(fin_rows["coverage"].iloc[0], 0.6)  # 3/5：code3 未可用、code4 缺 roe
+        self.assertAlmostEqual(fin_rows["coverage"].iloc[-1], 0.8)  # 4/5：code3 到可用日
+
+    def test_required_fields_map_derived_and_unsourced(self):
+        """审计字段映射：roa→net_profit/total_assets；ps 等无来源字段不进审计并显式列出。"""
+        from ashare_factor_research.factors.registry import DEFAULT_FACTOR_REGISTRY
+        from ashare_factor_research.main import _required_fields_from_specs, unsourced_factor_inputs
+
+        specs = [DEFAULT_FACTOR_REGISTRY[name] for name in ["roa", "sp", "mf_20", "large_order_mf_20", "cfp"]]
+        fields = _required_fields_from_specs(specs)
+        self.assertIn("net_profit", fields["financial_indicator"])
+        self.assertIn("total_assets", fields["financial_indicator"])
+        self.assertNotIn("roa", fields.get("financial_indicator", []))
+        self.assertIn("net_mf_amount", fields["daily_basic"])
+        self.assertNotIn("ps", fields.get("daily_basic", []))
+        self.assertEqual(
+            unsourced_factor_inputs(specs),
+            ["large_order_net_mf_amount", "operating_cash_flow", "ps"],
+        )
+
+    def _exemption_fixture(self):
+        dates = pd.date_range("2015-01-05", periods=2, freq="B")
+        codes = [f"{i:06d}.SZ" for i in range(5)]
+        members = pd.DataFrame({
+            "index_code": ["000905.SH"] * 5, "ts_code": codes, "weight": 0.2,
+            "in_date": pd.Timestamp("2014-01-01"), "out_date": pd.NaT,
+        })
+        calendar = pd.DataFrame({"trade_date": dates, "is_open": True})
+        return dates, codes, members, calendar
+
+    def test_amount_exemption_only_no_amount_stocks(self):
+        """登记豁免：daily_bar.amount 分母仅剔除"全部行 amount 缺失"的股票；其他字段不受影响。"""
+        dates, codes, members, calendar = self._exemption_fixture()
+        amount = [np.nan, np.nan, 1e7, 1e7, 1e7]  # codes0/1 全程无成交额（腾讯源口径）
+        daily_bar = pd.DataFrame({
+            "trade_date": np.tile(dates, 5), "ts_code": np.repeat(codes, 2),
+            "amount": np.repeat(amount, 2),
+            "adj_factor": np.repeat([1.0, 1.0, np.nan, 1.0, 1.0], 2),  # code2 adj_factor 缺失
+        })
+        tables = {"trade_calendar": calendar, "index_member": members, "daily_bar": daily_bar}
+        cov = compute_historical_member_coverage(
+            tables, required_fields={"daily_bar": ["amount", "adj_factor"]}, required_start="2015-01-01"
+        )
+        amt = cov[cov["field"] == "amount"]
+        self.assertTrue((amt["exempted_count"] == 2).all())       # 每日豁免 2 只无成交额股票
+        self.assertTrue((amt["coverage"] == 1.0).all())           # 3/(5-2)=1.0
+        adj = cov[cov["field"] == "adj_factor"]
+        self.assertTrue((adj["exempted_count"] == 0).all())       # adj_factor 不适用豁免
+        self.assertTrue((adj["coverage"] == 0.8).all())           # 分母仍为 5：4/5
+
+    def test_gross_margin_exemption_only_financial_members(self):
+        """登记豁免：gross_margin 分母仅剔除金融类成员；industry 缺失成员保持计入；其他财务字段不受影响。"""
+        dates, codes, members, calendar = self._exemption_fixture()
+        industry = pd.DataFrame({
+            "trade_date": np.tile(dates, 3),
+            "ts_code": np.repeat(codes[:3], 2),  # codes3/4 无行业记录
+            "industry_code": "x", "industry_name": np.repeat(["银行", "非银金融", "电子"], 2),
+        })
+        financial = pd.DataFrame({
+            "ts_code": codes,
+            "report_period": pd.Timestamp("2014-09-30"),
+            "ann_date": pd.Timestamp("2014-10-30"),
+            "usable_date": pd.Timestamp("2014-10-31"),
+            "revision_date": pd.Timestamp("2014-10-30"),
+            "revision_id": 0, "source_id": "s1",
+            "gross_margin": [np.nan, np.nan, 0.3, np.nan, 0.25],  # 金融 2 只 NaN + code3 非金融 NaN
+            "roe": [0.1, np.nan, 0.1, 0.1, 0.1],                  # code1 roe NaN（非豁免字段）
+            "debt_ratio": 0.4, "revenue_yoy": 0.1, "profit_yoy": 0.1,
+        })
+        tables = {"trade_calendar": calendar, "index_member": members,
+                  "industry": industry, "financial_indicator": financial}
+        cov = compute_historical_member_coverage(
+            tables, required_fields={"financial_indicator": ["gross_margin", "roe"]}, required_start="2015-01-01"
+        )
+        gm = cov[cov["field"] == "gross_margin"]
+        self.assertTrue((gm["exempted_count"] == 2).all())        # 每日豁免 2 只金融类
+        self.assertTrue((gm["coverage"] == 2 / 3).all())          # code3 保持计入分母：2/3
+        roe = cov[cov["field"] == "roe"]
+        self.assertTrue((roe["exempted_count"] == 0).all())       # roe 不适用豁免
+        self.assertTrue((roe["coverage"] == 0.8).all())           # 分母仍为 5：4/5
 
     def test_adjacent_month_labels_have_strict_timing(self):
         dates = pd.date_range("2022-01-03", "2022-05-31", freq="B")

@@ -38,9 +38,12 @@ def compute_event_sentiment_factor(
     trade_dates: pd.DatetimeIndex,
     lookback_days: int = 20,
 ) -> pd.DataFrame:
-    validate_event_labels(events)
-    if events.empty:
+    # 空事件表（含 real 模式 news_event 未到位的无列空表）直接返回空结果：
+    # 下游以 fillna(0.0) 处理中性事件因子（pipeline.build_factor_panel）。
+    # 非空输入仍强制列校验，不放松口径。
+    if events is None or events.empty:
         return pd.DataFrame(columns=["trade_date", "ts_code", "event_sentiment_20"])
+    validate_event_labels(events)
     ev = events.copy()
     ev["publish_date"] = pd.to_datetime(ev["publish_date"])
     dates = pd.DatetimeIndex(pd.to_datetime(trade_dates).sort_values().unique())

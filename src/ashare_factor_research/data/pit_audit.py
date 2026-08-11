@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 from ashare_factor_research.data.data_quality import REAL_DATA_EXPECTED_TABLES, has_blocking_issues
 from ashare_factor_research.utils.io import ensure_dir
@@ -167,6 +168,36 @@ def _keys_by_date(frame: pd.DataFrame | None) -> dict[pd.Timestamp, set[str]]:
     return {date: set(part["ts_code"].astype(str)) for date, part in data.groupby("trade_date")}
 
 
+# 停牌成员日从分母剔除的表（2026-08-11 用户批准的口径修正）。
+# 实测（tmp/probe9_suspension_presence.py，400 个停牌成员日抽样）：
+#   daily_bar 停牌日有行率 0.000（停牌无 K 线是正确数据行为）→ 剔除分母；
+#   daily_basic 1.000 / industry 0.985 / limit_price 0.998（截至 2026-06-30 全程 ≥0.95）
+#   —— 停牌日仍有行，分母保留停牌成员。
+_SUSPENSION_EXCLUDED_TABLES = frozenset({"daily_bar"})
+
+
+def _suspended_codes_by_date(
+    suspension: pd.DataFrame | None,
+    dates: pd.DatetimeIndex,
+) -> dict[pd.Timestamp, set[str]]:
+    """每个交易日当日停牌（[suspend_date, resume_date)）的 ts_code 集合。"""
+    empty = {date: set() for date in dates}
+    if suspension is None or suspension.empty or not {"ts_code", "suspend_date", "resume_date"}.issubset(suspension.columns):
+        return empty
+    s = suspension[["ts_code", "suspend_date", "resume_date"]].copy()
+    s["suspend_date"] = pd.to_datetime(s["suspend_date"], errors="coerce")
+    s["resume_date"] = pd.to_datetime(s["resume_date"], errors="coerce")
+    s = s[s["suspend_date"].notna()]
+    out: dict[pd.Timestamp, set[str]] = {date: set() for date in dates}
+    arr = dates.values
+    for code, beg, end in s.itertuples(index=False):
+        lo = int(np.searchsorted(arr, np.datetime64(beg), side="left"))
+        hi = len(arr) if pd.isna(end) else int(np.searchsorted(arr, np.datetime64(end), side="left"))
+        for i in range(lo, hi):
+            out[dates[i]].add(str(code))
+    return out
+
+
 def audit_universe_coverage(
     tables: dict[str, pd.DataFrame],
     *,
@@ -175,7 +206,7 @@ def audit_universe_coverage(
     min_coverage: float = 0.95,
 ) -> pd.DataFrame:
     columns = [
-        "trade_date", "active_member_count", "daily_bar_coverage", "daily_basic_coverage",
+        "trade_date", "active_member_count", "suspended_member_count", "daily_bar_coverage", "daily_basic_coverage",
         "industry_coverage", "limit_price_coverage", "minimum_coverage", "passed", "issue",
     ]
     calendar = tables.get("trade_calendar")
@@ -191,20 +222,28 @@ def audit_universe_coverage(
     member["in_date"] = pd.to_datetime(member["in_date"], errors="coerce")
     member["out_date"] = pd.to_datetime(member["out_date"], errors="coerce")
     keyed = {name: _keys_by_date(tables.get(name)) for name in ["daily_bar", "daily_basic", "industry", "limit_price"]}
+    suspended = _suspended_codes_by_date(tables.get("suspension"), dates)
     rows = []
     for date in dates:
         active_mask = member["in_date"].le(date) & (member["out_date"].isna() | member["out_date"].gt(date))
         active = set(member.loc[active_mask, "ts_code"].astype(str))
         count = len(active)
-        coverages = {
-            name: (len(active & keyed[name].get(date, set())) / count if count else 0.0)
-            for name in keyed
-        }
+        suspended_active = active & suspended.get(date, set())
+        # 口径修正（2026-08-11 批准）：daily_bar 停牌日必然无行，停牌成员不计入分母；
+        # 其余三表停牌日仍有行（实测见 _SUSPENSION_EXCLUDED_TABLES 注释），分母保留停牌成员。
+        coverages = {}
+        for name in keyed:
+            denominator = count - len(suspended_active) if name in _SUSPENSION_EXCLUDED_TABLES else count
+            had = len(active & keyed[name].get(date, set()))
+            if name in _SUSPENSION_EXCLUDED_TABLES:
+                had -= len(active & keyed[name].get(date, set()) & suspended_active)
+            coverages[name] = (had / denominator) if denominator else 1.0
         minimum = min(coverages.values()) if coverages else 0.0
         passed = count > 0 and minimum >= min_coverage
         rows.append({
             "trade_date": date,
             "active_member_count": count,
+            "suspended_member_count": len(suspended_active),
             "daily_bar_coverage": coverages["daily_bar"],
             "daily_basic_coverage": coverages["daily_basic"],
             "industry_coverage": coverages["industry"],

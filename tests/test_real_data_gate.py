@@ -106,18 +106,22 @@ class RealDataGateTest(unittest.TestCase):
         approved = {
             name for name, entry in tables.items() if entry.get("license_status") == "approved_for_research"
         }
-        self.assertEqual(approved, {"trade_calendar", "benchmark_index", "daily_bar", "stock_basic"})
-        self.assertEqual(registry.get("review_status"), "pending_user_review")
+        # 2026-07-30 首次人工签署完成后：7 张 RESSET 必需表全部批准，登记表进入 approved 状态
+        # （见 signoff_sheet_20260727.md / 预检总报告_20260727.md；此前本测试断言签署前状态）。
+        expected = {
+            "trade_calendar", "benchmark_index", "daily_bar", "stock_basic",
+            "index_member", "daily_basic", "financial_indicator", "industry",
+            "suspension", "st_status", "limit_price",
+        }
+        self.assertEqual(approved, expected)
+        self.assertEqual(registry.get("review_status"), "approved")
+        self.assertTrue(str(registry.get("reviewed_by", "")).strip())
+        self.assertTrue(str(registry.get("reviewed_at", "")).strip())
         for table in sorted(approved):
             result = validate_source_registry(
                 registry, [table], evidence_base=Path("config")
             )
             self.assertTrue(result.is_valid, f"{table} should be import-ready: {result.errors}")
-        for table in ["index_member", "daily_basic", "financial_indicator", "industry",
-                      "suspension", "st_status", "limit_price"]:
-            result = validate_source_registry(registry, [table])
-            self.assertFalse(result.is_valid, f"{table} must remain blocked pending user data")
-            self.assertTrue(any("license_status" in error for error in result.errors))
 
     def test_real_gate_writes_all_specialized_audits(self):
         with tempfile.TemporaryDirectory() as tmp:

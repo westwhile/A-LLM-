@@ -110,6 +110,17 @@ class ResearchGovernanceTest(unittest.TestCase):
         factor = compute_event_sentiment_factor(events, pd.DatetimeIndex(pd.to_datetime(["2022-01-03", "2022-01-04"])))
         self.assertEqual(factor["trade_date"].min(), pd.Timestamp("2022-01-04"))
 
+    def test_empty_news_event_returns_empty_factor_without_column_error(self):
+        """回归：real 模式 news_event 未到位（无列空表）时事件因子返回空表，不因列校验报错。"""
+        factor = compute_event_sentiment_factor(pd.DataFrame(), pd.DatetimeIndex(pd.to_datetime(["2022-01-03"])))
+        self.assertTrue(factor.empty)
+        self.assertEqual(list(factor.columns), ["trade_date", "ts_code", "event_sentiment_20"])
+        # 非空但缺列仍必须报错（不放松口径）
+        with self.assertRaises(ValueError):
+            compute_event_sentiment_factor(
+                pd.DataFrame({"stock_code": ["000001.SZ"]}), pd.DatetimeIndex(pd.to_datetime(["2022-01-03"]))
+            )
+
     def test_same_day_financial_revision_uses_latest_explicit_version(self):
         frame = pd.DataFrame({
             "ts_code": ["A", "A"], "report_period": pd.to_datetime(["2021-12-31"] * 2),

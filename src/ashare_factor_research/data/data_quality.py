@@ -304,13 +304,26 @@ def _audit_cross_table_consistency(tables: dict[str, pd.DataFrame]) -> list[dict
             open_calendar = open_calendar[open_calendar["is_open"].astype(bool)]
         open_dates = set(pd.to_datetime(open_calendar["trade_date"]))
         usable = pd.to_datetime(financial["usable_date"], errors="coerce")
-        outside = int((usable.notna() & ~usable.isin(open_dates)).sum())
+        calendar_end = max(open_dates) if open_dates else None
+        # 批次窗口边界豁免（2026-08-11 用户批准的决策3：本批数据止于 2026-06-30，
+        # ann/usable/revision 超界照常保留）：usable_date 晚于日历终点不视为口径错误；
+        # 日历覆盖范围内落在非开市日的 usable_date 仍然阻断。
+        not_open = usable.notna() & ~usable.isin(open_dates)
+        beyond = not_open & (calendar_end is not None) & usable.gt(calendar_end)
+        outside = int((not_open & ~beyond).sum())
         issues.append(_issue(
             "financial_indicator",
             "usable_date_outside_trade_calendar",
             "blocking" if outside else "ok",
             outside,
             "Financial usable_date must be an open exchange trading date.",
+        ))
+        issues.append(_issue(
+            "financial_indicator",
+            "usable_date_beyond_batch_window",
+            "info" if bool(beyond.any()) else "ok",
+            int(beyond.sum()),
+            "usable_date later than the batch calendar end; rows kept per approved batch-window rule.",
         ))
     intervals = [
         ("index_member", ["index_code", "ts_code"], "in_date", "out_date"),

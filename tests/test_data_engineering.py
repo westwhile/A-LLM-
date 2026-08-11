@@ -98,6 +98,37 @@ class DataEngineeringTest(unittest.TestCase):
             self.assertTrue(csv_path.exists())
             self.assertTrue(issues["severity"].eq("blocking").any())
 
+    def test_usable_date_beyond_batch_window_tolerated(self):
+        """批次窗口豁免（决策3）：usable_date 晚于日历终点保留不阻断；日历内非开市日仍阻断。"""
+        from ashare_factor_research.data.data_quality import audit_tables
+
+        calendar = pd.DataFrame({
+            "trade_date": pd.to_datetime(["2026-06-26", "2026-06-29", "2026-06-30"]),
+            "is_open": [True, True, True],
+        })
+        financial = pd.DataFrame({
+            "ts_code": ["000001.SZ", "000002.SZ", "000004.SZ", "000005.SZ"],
+            "report_period": ["2026-03-31"] * 4,
+            "ann_date": pd.to_datetime(["2026-06-25", "2026-06-30", "2026-06-26", "2026-06-27"]),
+            "usable_date": pd.to_datetime(["2026-06-29", "2026-07-01", "2026-06-28", "2026-06-27"]),
+            "revision_date": pd.to_datetime(["2026-06-25", "2026-06-30", "2026-06-26", "2026-06-27"]),
+            "revision_id": [0, 0, 0, 0],
+            "source_id": ["s1", "s2", "s3", "s4"],
+        })
+        issues = audit_tables({"trade_calendar": calendar, "financial_indicator": financial})
+        outside = issues[issues["check"].eq("usable_date_outside_trade_calendar")].iloc[0]
+        beyond = issues[issues["check"].eq("usable_date_beyond_batch_window")].iloc[0]
+        # 2026-06-28/06-27 为日历范围内非开市日（阻断 2 行）；2026-07-01 超批次终点（豁免 1 行）
+        self.assertEqual(outside["severity"], "blocking")
+        self.assertEqual(outside["value"], 2)
+        self.assertEqual(beyond["value"], 1)
+        # 仅豁免行时无阻断
+        financial_ok = financial.iloc[[0, 1]]
+        issues_ok = audit_tables({"trade_calendar": calendar, "financial_indicator": financial_ok})
+        outside_ok = issues_ok[issues_ok["check"].eq("usable_date_outside_trade_calendar")].iloc[0]
+        self.assertEqual(outside_ok["severity"], "ok")
+        self.assertEqual(outside_ok["value"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
