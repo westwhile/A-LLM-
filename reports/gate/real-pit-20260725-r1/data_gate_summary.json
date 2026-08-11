@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "required_start": "2015-01-01",
+  "benchmark": "000905.SH",
+  "minimum_coverage": 0.95,
+  "source_registry_sha256": "508128ffd3ffd7ac36c727156208561f6cb706b5675bfdc2c779a6b689d992e0",
+  "missing_required_tables": [],
+  "blocking_reasons": [],
+  "audit_rows": {
+    "pit_timing_audit.csv": 548524,
+    "financial_revision_audit.csv": 248078,
+    "survivorship_audit.csv": 5533,
+    "universe_coverage.csv": 2790,
+    "benchmark_alignment.csv": 2790
+  }
+}

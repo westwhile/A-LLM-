@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "status": "blocked_by_pit_quality",
+  "required_start": "2015-01-01",
+  "benchmark": "000905.SH",
+  "minimum_coverage": 0.95,
+  "source_registry_sha256": "4168563dbf9bf30ccd765a61780be6b7e5c1dec360e24ed1c3814b0daedd5373",
+  "missing_required_tables": [],
+  "blocking_reasons": [
+    "pit_timing_audit.csv: failed rows present",
+    "universe_coverage.csv: failed rows present"
+  ],
+  "audit_rows": {
+    "pit_timing_audit.csv": 724915,
+    "financial_revision_audit.csv": 339796,
+    "survivorship_audit.csv": 5533,
+    "universe_coverage.csv": 2803,
+    "benchmark_alignment.csv": 2803
+  }
+}

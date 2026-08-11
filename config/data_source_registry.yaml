@@ -1,13 +1,12 @@
 schema_version: 1
-review_status: pending_user_review
-reviewed_by: null
-reviewed_at: null
+review_status: approved
+reviewed_by: 李伟嘉
+reviewed_at: "2026-07-30 23:59 +08:00"
 notes: >-
-  2026-07-19 阶段 1D 纠错：发现 AkShare 1.18.64 的 Sina qfq-factor 返回的是除数，
-  抓取层已改为显式保留 qfq_factor_raw 并派生 adj_factor = 1 / qfq_factor_raw；
-  旧批次 price_adjustment=raw_close_with_sina_qfq_factor_snapshot 会在组装层按 legacy schema
-  转换为倒数。本次修正后的批次尚未重新抓取，因此 review_status 保持 pending_user_review，
-  必须待纠错版本重建并逐表核对后由用户签署，不得代签。
+  2026-07-30 首次人工签署完成（reports/data_sources/signoff_sheet_20260727.md）。
+  7 张必需表由用户提供 RESSET（锐思）金融研究数据库数据（中央财经大学图书馆订阅，
+  在校学生教学科研使用），批次 data/staging/real-pit-20260725/，预检总报告见
+  reports/data_sources/预检总报告_20260727.md。许可证据：批次内 RESSET_版权说明_证据.pdf。
 tables:
   trade_calendar:
     source_type: open_source
@@ -31,9 +30,9 @@ tables:
     evidence_path: ../reports/data_sources/stock_basic_review.md
   daily_bar:
     source_type: mixed_open_and_local
-    provider: akshare_sina_plus_tencent
+    provider: akshare_sina_plus_tencent + resset（补历史成员751只主板+32只科创）
     provider_version: "1.18.64"
-    endpoint_or_file: stock_zh_a_daily + stock_zh_a_hist_tx + sina qfq-factor divisor snapshot (batch data/raw/real-20260719)
+    endpoint_or_file: stock_zh_a_daily + stock_zh_a_hist_tx + sina qfq-factor divisor snapshot (batch data/raw/real-20260719) + RESSET QTTNDIST/STIBQTTN/kcb_adjfactor (batch data/staging/real-pit-20260725, 见 daily_bar_review.md 2026-08-11 附录)
     license_status: approved_for_research
     pit_ready: true
     history_start: "2014-01-02"
@@ -47,72 +46,84 @@ tables:
     evidence_path: ../reports/data_sources/daily_bar_review.md
   daily_basic:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: daily_basic.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
-    units: {pe_ttm: ratio, pb: ratio, total_mv: CNY, turnover_rate: ratio, net_mf_amount: CNY}
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: 市盈率 + 日市值 + 日换手率 + 股票资金流向表 + 科创板估值指标 + 科创板资金流向表 (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "2014-01-01"
+    units:
+      pe_ttm: ratio_ttm
+      pb: ratio_main_board_derived_total_mv_over_parent_equity
+      total_mv: CNY
+      turnover_rate: ratio_float_shares_basis_pct_divided_by_100
+      net_mf_amount: CNY_large_plus_extra_large_order_net_inflow
     evidence_path: ../reports/data_sources/daily_basic_review.md
   industry:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: industry.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
-    units: {industry_code: categorical, industry_name: text}
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: INDHIS 行业变更历史(IndClsStd=38 新申万) + 科创板行业变更历史 (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "2014-01-01"
+    units: {industry_code: sw2021_level1_code, industry_name: text}
     evidence_path: ../reports/data_sources/industry_review.md
   index_member:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: index_member.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: IDXCOMPO 指数成分 + 指数成分股权重月度快照；快照推导规则 v1 见 index_member_review.md (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "2005-01-31"
     units: {weight: ratio, in_date: date, out_date: date}
     evidence_path: ../reports/data_sources/index_member_review.md
   financial_indicator:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: financial_indicator.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
-    units: {ratios: ratio, dates: date, revision_id: source_version}
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: FININD 财务指标 + FINRATIO 财务比率 + 科创板主要会计指标 (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "2013-01-01"
+    units:
+      roe: pct_diluted
+      gross_margin: pct_sales_gross_margin
+      debt_ratio: ratio_total_liab_over_total_assets
+      revenue_yoy: pct_yoy_cumulative
+      profit_yoy: pct_yoy_cumulative
+      dates: date
+      revision_id: disclosure_batch_sequence
     evidence_path: ../reports/data_sources/financial_indicator_review.md
   suspension:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: suspension.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: SUSPNSNRESMPTN 停复牌 + 科创板停复牌 (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "2005-04-21"
     units: {suspend_date: date, resume_date: date}
     evidence_path: ../reports/data_sources/suspension_review.md
   st_status:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: st_status.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: STKSPCTRMT 股票特别处理与撤销 (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "1998-04-28"
     units: {start_date: date, end_date: date}
     evidence_path: ../reports/data_sources/st_status_review.md
   limit_price:
     source_type: local_file
-    provider: user_supplied_licensed_source
-    provider_version: pending
-    endpoint_or_file: limit_price.csv_or_parquet
-    license_status: pending_user_review
-    pit_ready: false
-    history_start: "2015-01-01"
+    provider: resset
+    provider_version: "RESSET 金融研究数据库（央财图书馆订阅，2026-07-25~27 导出）"
+    endpoint_or_file: STKPRICELIMIT 股票涨跌停价 + 科创板股票涨跌停价 (batch data/staging/real-pit-20260725)
+    license_status: approved_for_research
+    pit_ready: true
+    history_start: "2014-01-01"
     units: {up_limit: CNY, down_limit: CNY}
     evidence_path: ../reports/data_sources/limit_price_review.md
   benchmark_index:

@@ -1,0 +1,101 @@
+{
+  "total_days": 2790,
+  "min_coverage_threshold": 0.95,
+  "fields": {
+    "daily_bar.adj_factor": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.997984,
+      "exempted": false
+    },
+    "daily_bar.amount": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 1.0,
+      "exempted": true,
+      "exempted_count_mean": 20.15,
+      "exempted_count_max": 43
+    },
+    "daily_basic.net_mf_amount": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.993534,
+      "exempted": false
+    },
+    "daily_basic.pb": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.979094,
+      "exempted": false
+    },
+    "daily_basic.pe_ttm": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.989247,
+      "exempted": false
+    },
+    "daily_basic.total_mv": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 1.0,
+      "exempted": false
+    },
+    "daily_basic.turnover_rate": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 1.0,
+      "exempted": false
+    },
+    "financial_indicator.debt_ratio": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.982,
+      "exempted": false
+    },
+    "financial_indicator.gross_margin": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.98167,
+      "exempted": true,
+      "exempted_count_mean": 25.38,
+      "exempted_count_max": 47
+    },
+    "financial_indicator.net_profit": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.982,
+      "exempted": false
+    },
+    "financial_indicator.operating_revenue": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.982,
+      "exempted": false
+    },
+    "financial_indicator.profit_yoy": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.982,
+      "exempted": false
+    },
+    "financial_indicator.revenue_yoy": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.98,
+      "exempted": false
+    },
+    "financial_indicator.roe": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.982,
+      "exempted": false
+    },
+    "financial_indicator.total_assets": {
+      "days": 2790,
+      "failed_days": 0,
+      "min_coverage": 0.982,
+      "exempted": false
+    }
+  },
+  "fields_with_failures": {}
+}
