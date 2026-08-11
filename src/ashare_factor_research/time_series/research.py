@@ -1109,9 +1109,15 @@ def compare_preregistered_weight_schemes(
             schemes["ewma_ic"] = _ic_to_weights(ewma.reindex(valid_factors))
         for scheme, weights in schemes.items():
             weights = weights.dropna()
-            weights = weights / weights.sum() if weights.sum() > 0 else weights
+            # 权重口径（2026-08-11 用户批准，协议级修改）：符号权重按 Σ|w| 归一（gross=1）。
+            # 旧口径按 Σw 归一（net=1）：Σw 为近零正数时杠杆爆炸（真实数据 rolling_ic_12m
+            # 单月 net -611%/+150%、换手 -27.4）；组合层换手按 |w| 加权（符号权重下
+            # 空头腿会产生负换手/负成本，同属该缺陷）。见 预检总报告_20260727.md 第七节。
+            gross_exposure = float(weights.abs().sum())
+            if gross_exposure > 0:
+                weights = weights / gross_exposure
             gross = float((available_returns.reindex(weights.index) * weights).sum())
-            weighted_turnover = float((available_turnover.reindex(weights.index) * weights).sum())
+            weighted_turnover = float((available_turnover.reindex(weights.index) * weights.abs()).sum())
             prior = previous_weights.get(scheme, pd.Series(dtype=float))
             if not prior.empty:
                 all_factors = prior.index.union(weights.index)

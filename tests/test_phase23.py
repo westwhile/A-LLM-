@@ -478,6 +478,32 @@ class Phase23ArtifactTest(unittest.TestCase):
         self.assertIn("scheme", comparison.columns)
         self.assertTrue(set(comparison["scheme"]).issuperset({"static_equal", "rolling_ic_12m", "ewma_ic"}))
 
+    def test_weight_schemes_gross_normalization_blocks_leverage_explosion(self):
+        # 回归（2026-08-11 口径修复）：符号权重按 Σ|w| 归一（gross=1）。
+        # 旧口径按 Σw 归一，Σw 近零正数时杠杆爆炸（真实批次 rolling_ic_12m 单月
+        # net -611%/+150%、换手为负）。构造两因子滚动 IC +0.001/-0.0009（Σw≈0.053），
+        # 断言修复后收益有界、换手与成本非负。
+        dates = pd.date_range("2015-01-31", periods=24, freq="ME")
+        ic = pd.DataFrame([
+            {"signal_date": d, "availability_date": d + pd.Timedelta(days=1),
+             "factor": factor, "rank_ic": rank_ic}
+            for d in dates
+            for factor, rank_ic in (("fa", 0.001), ("fb", -0.0009))
+        ])
+        returns = pd.DataFrame([
+            {"signal_date": d, "availability_date": d + pd.Timedelta(days=2),
+             "factor": factor, "Q5_minus_Q1_raw": q5q1, "turnover": 0.2}
+            for d in dates
+            for factor, q5q1 in (("fa", 0.10), ("fb", -0.10))
+        ])
+        comparison = compare_preregistered_weight_schemes(ic, returns, pd.DatetimeIndex(dates), CostConfig())
+        signed = comparison[comparison["scheme"].isin(["rolling_ic_12m", "rolling_ic_24m", "ewma_ic"])]
+        self.assertFalse(signed.empty)
+        # gross=1 下 |net| 不超过组合内最大单腿收益量级 + 成本；旧口径此处约 +1.9
+        self.assertTrue((signed["net_return"].abs() <= 0.20).all())
+        self.assertTrue((signed["turnover"] >= 0).all())
+        self.assertTrue((signed["cost"] >= 0).all())
+
     def test_leakage_availability_after_training_cutoff_rejected(self):
         # forecast origin must be strictly before availability date
         rng = np.random.default_rng(11)
