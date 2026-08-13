@@ -1,0 +1,64 @@
+schema_version: 1
+protocol_id: R1-TEXT-REPRESENTATION-DRAFT
+status: draft
+research_question: >-
+  在真实文本来源、严格事件时点、去重和固定收益评价器下，金融文本表示是否相对无文本、规则事件和结构化标签基准提供稳定的样本外增量？
+
+data:
+  text_manifest_sha256: null
+  structured_feature_manifest_sha256: null
+  data_mode: pending_human_acceptance
+
+split:
+  method: purged_walk_forward
+  train_months: 24
+  minimum_oos_months: 36
+  embargo_days: 20
+  min_train_dates: 12
+  min_assets_per_test_date: 20
+  final_holdout_start: null
+  final_holdout_accessed: false
+  final_holdout_access_ref: null
+
+evaluator:
+  frozen_during_representation_comparison: false
+  models:
+    - name: linear
+      parameters:
+        intercept: true
+        regularization: none
+        ridge_alpha: 0.0
+        standardize: true
+    - name: lightgbm
+      parameters:
+        enabled: false
+        reason: dependency_and_hyperparameters_pending_human_freeze
+
+experiments:
+  - experiment_id: R1-E0
+    representation: no_text
+    status: declared
+  - experiment_id: R1-E1
+    representation: rule_labels
+    status: engineering_ready
+  - experiment_id: R1-E2
+    representation: llm_labels
+    status: blocked_by_model_and_gold_set_choice
+  - experiment_id: R1-E3
+    representation: embedding
+    status: adapter_ready_model_choice_pending
+
+metrics: [rank_ic, oos_loss, coverage, turnover, cost_after_group_return]
+negative_controls: [event_time_shift, stock_mapping_permutation, title_only, company_name_removed]
+trial_budget: 4
+stop_rules:
+  - stop_if_text_license_or_pit_gate_fails
+  - stop_if_gold_set_quality_is_below_preregistered_threshold
+  - stop_before_rag_if_e2_and_e3_show_no_stable_increment
+
+human_signoff:
+  approved_by: null
+  approved_at: null
+  approval_ref: null
+
+synthetic_engineering_only: true

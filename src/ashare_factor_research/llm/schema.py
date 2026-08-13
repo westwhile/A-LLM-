@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
+import json
 from typing import Any
 
 import pandas as pd
@@ -10,11 +12,27 @@ from ashare_factor_research.utils.helpers import require_columns
 
 
 RAW_EVENT_COLUMNS = ["event_id", "stock_code", "title", "content", "source", "publish_time"]
+LABEL_SCHEMA_VERSION = 1
 LABEL_COLUMNS = [
     "event_id", "stock_code", "publish_date", "event_type", "sentiment", "impact_horizon",
     "confidence", "reason", "raw_text", "text_source", "prompt_version", "model",
     "output_json", "cache_key", "created_at",
 ]
+
+
+def label_schema_sha256() -> str:
+    """Stable fingerprint for cache invalidation and artifact auditing."""
+
+    payload = {
+        "schema_version": LABEL_SCHEMA_VERSION,
+        "raw_event_columns": RAW_EVENT_COLUMNS,
+        "label_columns": LABEL_COLUMNS,
+        "event_types": list(EVENT_TYPES),
+        "sentiments": list(SENTIMENTS),
+        "impact_horizons": list(IMPACT_HORIZONS),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def validate_llm_label_payload(payload: Mapping[str, Any]) -> None:
@@ -52,4 +70,3 @@ def validate_llm_event_labels(labels: pd.DataFrame, signal_date: pd.Timestamp | 
         raise ValueError("publish_date must not be later than signal_date")
     if labels["cache_key"].duplicated().any():
         raise ValueError("cache_key must be unique")
-

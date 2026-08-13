@@ -42,6 +42,21 @@ from ashare_factor_research.pipeline import (
 )
 from ashare_factor_research.llm.audit import sample_labels_for_review, write_llm_event_audit_report
 from ashare_factor_research.llm.client import batch_label_events
+from ashare_factor_research.llm.evaluator import (
+    evaluate_representation_increment,
+    write_r1_evaluation_artifacts,
+)
+from ashare_factor_research.llm.r1_protocol import (
+    frozen_linear_spec_from_protocol,
+    load_r1_protocol,
+    write_r1_protocol_receipt,
+)
+from ashare_factor_research.llm.representation import (
+    build_label_representation,
+    write_text_representation_artifact,
+)
+from ashare_factor_research.llm.rule_baseline import write_rule_baseline_artifact
+from ashare_factor_research.llm.text_dataset import prepare_text_events, write_text_preparation_artifacts
 from ashare_factor_research.quality import run_quality_checks
 from ashare_factor_research.time_series.research import (
     build_monthly_factor_ic,
@@ -229,7 +244,109 @@ def _cmd_label_events(args: argparse.Namespace) -> int:
     review_path = output.with_name(f"{output.stem}_review.csv")
     review.to_csv(review_path, index=False, encoding="utf-8")
     write_llm_event_audit_report(review, output.with_name(f"{output.stem}_audit.md"))
-    print(json.dumps({"labels": len(labels), "output": str(output), "review": str(review_path)}, ensure_ascii=False))
+    summary = {"labels": len(labels), "output": str(output), "review": str(review_path)}
+    if args.artifact_dir:
+        write_rule_baseline_artifact(labels, args.artifact_dir)
+        summary["artifact_dir"] = str(args.artifact_dir)
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
+def _cmd_prepare_text_events(args: argparse.Namespace) -> int:
+    raw = pd.read_csv(args.input)
+    registry: list[str] | None = None
+    if args.stock_registry:
+        registry_frame = pd.read_csv(args.stock_registry)
+        candidates = [column for column in ("stock_code", "ts_code") if column in registry_frame]
+        if not candidates:
+            raise ValueError("stock registry requires a stock_code or ts_code column")
+        registry = registry_frame[candidates[0]].dropna().astype(str).tolist()
+    result = prepare_text_events(
+        raw,
+        stock_registry=registry,
+        near_duplicate_threshold=args.near_duplicate_threshold,
+        near_duplicate_window_days=args.near_duplicate_window_days,
+    )
+    paths = write_text_preparation_artifacts(result, args.output_dir)
+    print(json.dumps({"paths": paths, "quality": result.quality_report}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_build_r1_label_representation(args: argparse.Namespace) -> int:
+    prepared = pd.read_csv(args.prepared_events)
+    labels = pd.read_csv(args.labels)
+    text_manifest = (
+        json.loads(Path(args.text_manifest).read_text(encoding="utf-8"))
+        if args.text_manifest
+        else None
+    )
+    rows = build_label_representation(
+        prepared,
+        labels,
+        representation_type=args.representation_type,
+        representation_version=args.representation_version,
+    )
+    models = sorted(labels["model"].dropna().astype(str).unique())
+    if len(models) != 1:
+        raise ValueError(f"label representation requires one model, got: {models}")
+    artifact = write_text_representation_artifact(
+        rows,
+        args.output_dir,
+        representation_id=args.representation_id,
+        model_card={
+            "model_id": models[0],
+            "model_revision": args.model_revision,
+            "preprocessing_version": args.preprocessing_version,
+            "intended_use": "R1 label representation comparison",
+            "license_status": args.model_license_status,
+        },
+        preprocessing={
+            "version": args.preprocessing_version,
+            "prepared_events": str(args.prepared_events),
+        },
+        aggregation={
+            "level": "event",
+            "deduplication": "consume prepared dedup_group_id; signal selection keeps first available exact duplicate",
+        },
+        text_manifest=text_manifest,
+        trial_id=args.trial_id,
+        status="draft",
+    )
+    print(json.dumps(artifact, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_validate_r1_protocol(args: argparse.Namespace) -> int:
+    protocol = load_r1_protocol(args.protocol)
+    receipt_path = Path(args.receipt) if args.receipt else Path(args.protocol).with_suffix(".receipt.json")
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt = write_r1_protocol_receipt(protocol, receipt_path)
+    print(json.dumps({**receipt, "receipt": str(receipt_path)}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_run_r1_evaluator(args: argparse.Namespace) -> int:
+    protocol = load_r1_protocol(args.protocol)
+    spec = frozen_linear_spec_from_protocol(protocol)
+    panel = pd.read_csv(args.panel)
+    base_features = [value.strip() for value in args.base_features.split(",") if value.strip()]
+    text_features = [value.strip() for value in args.text_features.split(",") if value.strip()]
+    if not text_features:
+        raise ValueError("--text-features must contain at least one feature")
+    result = evaluate_representation_increment(
+        panel,
+        base_features=base_features,
+        text_features=text_features,
+        spec=spec,
+        target_col=args.target_col,
+        signal_date_col=args.signal_date_col,
+        label_end_date_col=args.label_end_date_col,
+        asset_col=args.asset_col,
+        allow_final_holdout=args.allow_final_holdout,
+        final_holdout_access_ref=args.final_holdout_access_ref,
+    )
+    paths = write_r1_evaluation_artifacts(result, args.output_dir)
+    print(json.dumps({"paths": paths, "summary": result["summary"]}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -913,6 +1030,57 @@ def main() -> None:
     labels.add_argument("--output", required=True)
     labels.add_argument("--cache", default="outputs/llm/label_cache.jsonl")
     labels.add_argument("--review-sample-size", type=int, default=50)
+    labels.add_argument("--artifact-dir", default=None,
+                        help="Optional directory to write the R1-E1 rule-baseline artifact (labels.csv + manifest).")
+
+    prepare_text = sub.add_parser(
+        "prepare-text-events",
+        help="Build R1 PIT/dedup/entity-review artifacts from an already authorised local text table.",
+    )
+    prepare_text.add_argument("--input", required=True)
+    prepare_text.add_argument("--output-dir", required=True)
+    prepare_text.add_argument("--stock-registry", help="Optional CSV with stock_code or ts_code for mapping checks.")
+    prepare_text.add_argument("--near-duplicate-threshold", type=float, default=0.85)
+    prepare_text.add_argument("--near-duplicate-window-days", type=int, default=7)
+
+    label_representation = sub.add_parser(
+        "build-r1-label-representation",
+        help="Package prepared PIT metadata and rule/LLM labels into a draft TextRepresentationArtifact.",
+    )
+    label_representation.add_argument("--prepared-events", required=True)
+    label_representation.add_argument("--labels", required=True)
+    label_representation.add_argument("--output-dir", required=True)
+    label_representation.add_argument("--representation-id", required=True)
+    label_representation.add_argument("--representation-type", choices=["rule_labels", "llm_labels"], required=True)
+    label_representation.add_argument("--representation-version")
+    label_representation.add_argument("--model-revision", required=True)
+    label_representation.add_argument("--model-license-status", required=True)
+    label_representation.add_argument("--preprocessing-version", default="r1_text_preparation_v1")
+    label_representation.add_argument("--text-manifest")
+    label_representation.add_argument("--trial-id")
+
+    r1_protocol = sub.add_parser(
+        "validate-r1-protocol",
+        help="Validate the frozen-evaluator R1 contract and write a non-promotional receipt.",
+    )
+    r1_protocol.add_argument("--protocol", default="config/r1_protocol.template.yaml")
+    r1_protocol.add_argument("--receipt")
+
+    r1_evaluator = sub.add_parser(
+        "run-r1-fixed-evaluator",
+        help="Run the fixed linear R1 evaluator; refuses draft/unapproved protocols.",
+    )
+    r1_evaluator.add_argument("--protocol", required=True)
+    r1_evaluator.add_argument("--panel", required=True)
+    r1_evaluator.add_argument("--base-features", default="")
+    r1_evaluator.add_argument("--text-features", required=True)
+    r1_evaluator.add_argument("--target-col", default="target_return")
+    r1_evaluator.add_argument("--signal-date-col", default="signal_date")
+    r1_evaluator.add_argument("--label-end-date-col", default="label_end_date")
+    r1_evaluator.add_argument("--asset-col", default="ts_code")
+    r1_evaluator.add_argument("--output-dir", required=True)
+    r1_evaluator.add_argument("--allow-final-holdout", action="store_true")
+    r1_evaluator.add_argument("--final-holdout-access-ref")
 
     quality_all = sub.add_parser("quality", help="Run compile, tests, CLI and notebook smoke gates.")
     quality_all.add_argument("--skip-notebooks", action="store_true")
@@ -1036,6 +1204,14 @@ def main() -> None:
             print(summary.read_text(encoding="utf-8"))
         elif args.command == "label-events":
             raise SystemExit(_cmd_label_events(args))
+        elif args.command == "prepare-text-events":
+            raise SystemExit(_cmd_prepare_text_events(args))
+        elif args.command == "build-r1-label-representation":
+            raise SystemExit(_cmd_build_r1_label_representation(args))
+        elif args.command == "validate-r1-protocol":
+            raise SystemExit(_cmd_validate_r1_protocol(args))
+        elif args.command == "run-r1-fixed-evaluator":
+            raise SystemExit(_cmd_run_r1_evaluator(args))
         elif args.command == "quality":
             print(json.dumps(run_quality_checks(args.skip_notebooks, args.require_ruff, args.update_artifacts), ensure_ascii=False, indent=2, default=_json_default))
         elif args.command == "validate-config":
