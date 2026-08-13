@@ -19,6 +19,8 @@
 | 绩效与归因 | 收益、波动、Sharpe、Sortino、Calmar、回撤、相对基准指标和多维贡献分析 | 主动行业暴露、个股/行业/市值/回撤/成本归因 |
 | LLM 事件研究 | 默认离线标签器、Prompt/模型版本、JSONL 缓存、原文留痕和人工抽查门槛 | LLM 标签审计 CSV 与 Markdown 报告 |
 
+R1 文本工程已经扩展为 fail-closed 的 PIT/去重/实体复核、Embedding adapter、统一 `TextRepresentationArtifact`、固定线性 evaluator 和协议门禁。操作流程与尚需人工决定的科研边界见 [R1 工程实施与人工闸门](docs/r1_engineering_guide.md)。
+
 可部署时序模型统一通过 `PointInTimeForecaster.fit/update/forecast` 调用。接口拒绝晚于 `as_of_date` 的训练观测和不晚于训练截止日的预测目标，并统一返回训练截止日、预测目标日、模型版本、观测数和有效性门槛状态。
 
 ## 研究流程
